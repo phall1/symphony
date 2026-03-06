@@ -1,0 +1,53 @@
+T6: Linear Tracker Client — Test Evidence
+==========================================
+
+Task: Implement Linear GraphQL HTTP client (typescript/src/tracker/)
+
+Files Created:
+- typescript/src/tracker/linear.ts  (GraphQL client, normalization, HTTP layer)
+- typescript/src/tracker/index.ts   (re-exports + makeLinearTrackerClientLive Layer factory)
+- typescript/src/tracker/index.test.ts (7 tests)
+
+Test Command:
+  export PATH="/Users/phall/.bun/bin:$PATH"
+  cd /Users/phall/workspace/symphony/typescript
+  bun run test src/tracker/
+
+Test Output:
+  $ vitest run src/tracker/
+
+   RUN  v3.2.4 /Users/phall/workspace/symphony/typescript
+
+   ✓ src/tracker/index.test.ts (7 tests) 6ms
+
+   Test Files  1 passed (1)
+        Tests  7 passed (7)
+     Start at  19:44:17
+     Duration  422ms (transform 35ms, setup 0ms, collect 164ms, tests 6ms, environment 0ms, prepare 40ms)
+
+Tests (7):
+  fetchCandidateIssues
+    ✓ single page response returns normalized issues with labels lowercased
+    ✓ two-page response returns all issues in order
+    ✓ normalizes blockers from relations.nodes[].relatedIssue
+  fetchIssueStatesByIds
+    ✓ empty array returns [] without calling fetch
+  fetchIssuesByStates
+    ✓ empty array returns [] without calling fetch
+  error handling
+    ✓ GraphQL errors response fails with linear_graphql_errors
+    ✓ HTTP 401 response fails with linear_api_status
+
+Typecheck:
+  Command: bun run typecheck
+  Result: Tracker files pass (no errors in src/tracker/)
+  LSP diagnostics: 0 errors in all three tracker files
+  Note: Pre-existing workspace errors in src/workspace/ (introduced by T5, not T6)
+
+Implementation Notes:
+- Native fetch only (no GraphQL library)
+- Pagination via cursor loop for fetchCandidateIssues and fetchIssuesByStates
+- fetchIssueStatesByIds + fetchIssuesByStates short-circuit on empty input (Effect.succeed([]))
+- Error normalization: TrackerError tagged objects rethrown through catch handler
+- makeLinearTrackerClientLive returns Layer.Layer<TrackerClient> from ResolvedConfig
+- Tests use vi.stubGlobal("fetch", mockFn) + vi.unstubAllGlobals() in afterEach

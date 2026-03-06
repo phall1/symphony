@@ -1,0 +1,70 @@
+=== T2: Shared Types + Domain Model ===
+Task: Create typescript/src/types.ts with ALL domain types from SPEC.md §4
+
+EXECUTION RESULTS:
+─────────────────────────────────────────────────────────────────────────────
+
+1. FILE CREATION
+   ✓ Created: /Users/phall/workspace/symphony/typescript/src/types.ts
+   ✓ Size: 370 lines
+   ✓ Format: Pure TypeScript types (no Effect imports)
+
+2. TYPECHECK VERIFICATION
+   Command: cd typescript && npx tsc --noEmit
+   Exit Code: 0 ✓
+   Status: NO TYPESCRIPT ERRORS
+
+3. EXPORT COUNT
+   Command: grep -c "^export" typescript/src/types.ts
+   Result: 37 exports ✓
+   Requirement: >= 15 exports
+   Status: EXCEEDS REQUIREMENT (37 > 15)
+
+4. DOMAIN TYPES INCLUDED
+   ✓ BlockerRef (Issue domain)
+   ✓ Issue (Issue domain)
+   ✓ TrackerConfig (Workflow config)
+   ✓ PollingConfig (Workflow config)
+   ✓ WorkspaceConfig (Workflow config)
+   ✓ HooksConfig (Workflow config)
+   ✓ AgentConfig (Workflow config)
+   ✓ CodexConfig (Workflow config)
+   ✓ OpenCodeConfig (Workflow config)
+   ✓ ServerConfig (Workflow config)
+   ✓ WorkflowConfig (Workflow config)
+   ✓ WorkflowDefinition (Workflow config)
+   ✓ ResolvedConfig (Resolved config)
+   ✓ Workspace (Workspace domain)
+   ✓ RunAttemptStatus (Run attempt domain)
+   ✓ TokenUsage (Agent events)
+   ✓ AgentEvent (Agent events)
+   ✓ TokenTotals (Orchestrator state)
+   ✓ RunningEntry (Orchestrator state)
+   ✓ RetryEntry (Orchestrator state)
+   ✓ OrchestratorState (Orchestrator state)
+   ✓ WorkflowErrorCode (Error types)
+   ✓ WorkflowError (Error types)
+   ✓ ConfigErrorCode (Error types)
+   ✓ ConfigError (Error types)
+   ✓ TrackerErrorCode (Error types)
+   ✓ TrackerError (Error types)
+   ✓ WorkspaceErrorCode (Error types)
+   ✓ WorkspaceError (Error types)
+   ✓ AgentErrorCode (Error types)
+   ✓ AgentError (Error types)
+   ✓ PromptErrorCode (Error types)
+   ✓ PromptError (Error types)
+   ✓ SymphonyError (Error union)
+   ✓ RunningRow (HTTP API shapes)
+   ✓ RetryRow (HTTP API shapes)
+   ✓ RuntimeSnapshot (HTTP API shapes)
+
+5. TYPE SAFETY NOTES
+   ✓ All domain types use readonly properties
+   ✓ ReadonlyArray and ReadonlyMap used for immutable collections
+   ✓ worker_fiber and timer_handle typed as unknown (circular dep avoidance)
+   ✓ No use of 'any' for domain types
+   ✓ Proper union types for discriminated errors
+
+CONCLUSION: ✓ TASK COMPLETE
+All requirements met. File ready for integration.

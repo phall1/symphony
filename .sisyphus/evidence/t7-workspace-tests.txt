@@ -1,0 +1,21 @@
+bun test v1.3.10 (30e609e0)
+[WorkspaceManager] after_run hook failed for /var/folders/24/pv8lrvpx06s3lbc6_g_0hq980000gn/T/symphony-test-f2fEU3, ignoring
+
+ 11 pass
+ 0 fail
+ 16 expect() calls
+Ran 11 tests across 1 file. [135.00ms]
+--- typecheck (workspace files only) ---
+src/config/index.ts(13,16): error TS2339: Property 'scoped' does not exist on type 'typeof import("/Users/phall/workspace/symphony/typescript/node_modules/effect/dist/Layer", { with: { "resolution-mode": "import" } })'.
+src/config/index.ts(35,28): error TS2339: Property 'make' does not exist on type 'typeof WorkflowStore'.
+Exit codes: test=0
+
+--- typecheck output ---
+Pre-existing errors in src/config/index.ts (untracked, from another task):
+  - Layer.scoped not available in Effect v4 beta (different API)
+  - WorkflowStore.make not available (ServiceMap.Service pattern)
+
+Workspace files (src/workspace/*.ts) have zero LSP diagnostics:
+  - hooks.ts: no errors
+  - index.ts: no errors
+  - index.test.ts: no errors

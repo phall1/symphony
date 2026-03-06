@@ -1,0 +1,12 @@
+total 4
+drwxr-xr-x 11 phall staff 352 Mar  5 19:04 .
+drwxr-xr-x 10 phall staff 320 Mar  5 19:05 ..
+drwxr-xr-x  3 phall staff  96 Mar  5 19:04 cli
+drwxr-xr-x  3 phall staff  96 Mar  5 19:04 config
+drwxr-xr-x  4 phall staff 128 Mar  5 19:04 engine
+-rw-r--r--  1 phall staff 144 Mar  5 19:04 main.ts
+drwxr-xr-x  3 phall staff  96 Mar  5 19:04 observability
+drwxr-xr-x  3 phall staff  96 Mar  5 19:04 orchestrator
+drwxr-xr-x  3 phall staff  96 Mar  5 19:04 prompt
+drwxr-xr-x  3 phall staff  96 Mar  5 19:04 tracker
+drwxr-xr-x  3 phall staff  96 Mar  5 19:04 workspace
