@@ -274,3 +274,81 @@ Layer.effect(WorkflowStore)(
 - `Effect.flip(effect)` to test failure cases — swaps error/success channels
 - `expect(caught).toMatchObject({ _tag: "WorkflowError", code: "..." })` for thrown errors
 - Restore env vars in finally blocks when testing `$VAR` resolution
+
+## T9: Orchestrator Core — COMPLETED
+
+### Effect v4 API Key Findings
+- `Effect.catchAll` does NOT exist in v4 beta — use `Effect.catchCause` for all error catching
+- `Effect.result()` returns a Result type whose Success/Failure variants DON'T expose `.value`/`.cause` as properties — avoid `Effect.result` entirely; use `Effect.catchCause` with null sentinel pattern instead
+- `Effect.forkChild` returns `Fiber<A, E>` — cast with `as Fiber.Fiber<void, unknown>` when storing in unknown-typed fields
+- `Ref.modify(ref, (s) => [returnVal, newState] as const)` — the tuple must use `as const` for proper typing
+- `Effect.map(Effect.forkChild(effect), (f) => f)` — use `Effect.map` to transform fiber types
+
+### Architecture Decisions
+- **Circular dependency avoidance**: `scheduleRetry` + `handleRetryTimer` + `interruptFiber` live in `dispatch.ts` (not `poll.ts`) since retry handling dispatches new workers
+- **Dependency union type**: `OrchestratorDeps` exported from `dispatch.ts` as the canonical service union type
+- **No `Effect.result` pattern**: Replaced all `Effect.result` + tag checks with `Effect.catchCause` + null sentinel — more idiomatic v4
+- **before_run hook**: WorkspaceManager.runHook only accepts "after_run" | "before_remove" per the service interface; `before_run` hook is run via `runHook("after_run", ...)` with the script from `config.hooks.before_run` (service API limitation we can't modify)
+- **State helpers are pure functions**: All in `state.ts`, return new objects — Ref.update wraps them
+
+### Files Created
+- `typescript/src/orchestrator/state.ts` — makeInitialState, addRunning, removeRunning, updateRunningEntry, terminateRunningIssue, normalizeState, isActiveState, isTerminalState, slot counting, retry delay calc, makeRunningEntry
+- `typescript/src/orchestrator/dispatch.ts` — sortForDispatch, isEligible, dispatchIssue, scheduleRetry, handleRetryTimer, interruptFiber, OrchestratorDeps type
+- `typescript/src/orchestrator/worker.ts` — runWorker, turnsLoop, handleAgentEvent, bestEffortAfterRun
+- `typescript/src/orchestrator/poll.ts` — tick, pollLoop, reconcileRunningIssues, reconcileStalls, terminateAndCleanup, handleWorkerExit, startupTerminalCleanup
+- `typescript/src/orchestrator/index.ts` — OrchestratorLive Layer, re-exports
+
+### Verification
+- ✓ Zero LSP errors across all 5 orchestrator files
+- ✓ All pre-existing errors are in engine/codex/* and tracker/index.test.ts (from other tasks)
+- ✓ Evidence saved to `.sisyphus/evidence/t9-typecheck.txt`
+- ✓ All state mutations go through Ref.update/Ref.modify
+- ✓ No Effect.fork (v3) — all uses are Effect.forkChild (v4)
+
+## T8: Codex Agent Engine — COMPLETED
+
+### Effect v4 API Findings (Subprocess)
+- `ChildProcess` module at `effect/unstable/process` — NOT `@effect/platform`
+- `ChildProcess.make("bash", ["-lc", cmd], { cwd, stdin: "pipe" })` for subprocess
+- `yield* cmd` spawns within Scope (auto-cleanup on scope close)
+- `ChildProcessHandle.stdin` is a `Sink<void, Uint8Array>` — not interactive-friendly
+- **Interactive stdin pattern**: Queue<Uint8Array> → Stream.fromQueue → Stream.run(stream, handle.stdin) via forked fiber
+- `ChildProcessHandle.pid` is branded `ProcessId` — cast `as number` for raw
+- `ChildProcessHandle.exitCode` returns branded `ExitCode` 
+- `ChildProcessSpawner` is a service requirement — provide via `BunServices.layer`
+- `Effect.provide(BunServices.layer)` satisfies ChildProcessSpawner + FileSystem + Path + Terminal + Stdio
+
+### Effect v4 API Findings (Streams/Error Handling)
+- `Stream.mapConcat` does NOT exist — use `Stream.flatMap(x => Stream.fromIterable(arr))`
+- `Stream.unfoldEffect` does NOT exist — use `Stream.unfold<S, A, E, R>(init, f)` (4 type params)
+- `Stream.unfold` f returns `Effect<readonly [A, S] | undefined>` — return `undefined` to stop
+- `Effect.catchAll` does NOT exist in v4 — use `Effect.catchCause`
+- `Effect.catchAllCause` → `Effect.catchCause` in v4
+- `Effect.timeout(ms)` raises `TimeoutException` (not Option like v3)
+- `Scope.close(scope, Exit.void)` — use `Exit.void` not manual Exit construction
+
+### Architecture
+- **4 files**: `process.ts` (subprocess), `protocol.ts` (shared interface), `handshake.ts` (init sequence), `streaming.ts` (turn events), `index.ts` (orchestration + Layer)
+- **Shared line Queue**: proc.lines (Stream) → forked fiber → Queue<string> — consumed by both handshake and streaming
+- **CodexProtocol interface**: `sendRequest`, `sendNotification`, `sendResponse` — decouples handshake/streaming from process
+- **awaitResponse re-queuing**: Non-matching lines during handshake are re-queued for streaming consumption
+- **Session lifecycle**: createSession does init+thread/start; runTurn does turn/start per-turn (matches Elixir pattern)
+- **Approval auto-approve**: Send `{"id":"<id>","result":{"approved":true}}` for all approval methods
+- **User input hard fail**: `item/tool/requestUserInput` → AgentSessionError (turn_input_required)
+- **Unsupported tools**: `item/tool/call` → respond with `{"success":false,"error":"unsupported_tool_call"}`
+
+### Files Created
+- `typescript/src/engine/codex/process.ts` — subprocess launch, Queue-backed stdin, line splitting
+- `typescript/src/engine/codex/protocol.ts` — CodexProtocol interface
+- `typescript/src/engine/codex/handshake.ts` — JSON-RPC handshake (initialize→initialized→thread/start)
+- `typescript/src/engine/codex/streaming.ts` — turn event stream, protocol message mapping
+- `typescript/src/engine/codex/index.ts` — makeCodexAgentEngineLive Layer, protocol bridge, awaitResponse
+
+### Verification
+- ✓ Zero TypeScript errors in all codex files
+- ✓ Only pre-existing tracker test errors remain (preconnect property — Bun types issue)
+- ✓ Evidence saved to `.sisyphus/evidence/t8-typecheck.txt`
+- ✓ No `console.log` — all logging via `Effect.logDebug`/`Effect.logInfo`
+- ✓ No `as any` without justification
+- ✓ All state in Effect Ref — no mutable globals
+- ✓ Process terminates when Scope closes (Effect.addFinalizer)

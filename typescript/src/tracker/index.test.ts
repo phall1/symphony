@@ -19,22 +19,22 @@ afterEach(() => {
 })
 
 function mockFetch(response: unknown) {
-  globalThis.fetch = () =>
+  globalThis.fetch = (() =>
     Promise.resolve({
       ok: true,
       status: 200,
       json: () => Promise.resolve(response),
-    } as Response)
+    } as Response)) as unknown as typeof globalThis.fetch
 }
 
 function mockFetchError(status: number, statusText: string) {
-  globalThis.fetch = () =>
+  globalThis.fetch = ((() =>
     Promise.resolve({
       ok: false,
       status,
       statusText,
       json: () => Promise.resolve({}),
-    } as Response)
+    } as Response)) as unknown as typeof globalThis.fetch)
 }
 
 function makeIssueNode(overrides: Record<string, unknown> = {}) {
@@ -82,7 +82,7 @@ describe("fetchCandidateIssues", () => {
 
   it("two-page response returns all issues in order", async () => {
     let callCount = 0
-    globalThis.fetch = () => {
+    globalThis.fetch = ((() => {
       callCount++
       if (callCount === 1) {
         return Promise.resolve({
@@ -112,7 +112,7 @@ describe("fetchCandidateIssues", () => {
             },
           }),
       } as Response)
-    }
+    }) as unknown as typeof globalThis.fetch)
 
     const result = await Effect.runPromise(
       fetchCandidateIssues(ENDPOINT, API_KEY, PROJECT_SLUG, ACTIVE_STATES)
@@ -153,10 +153,10 @@ describe("fetchCandidateIssues", () => {
 describe("fetchIssueStatesByIds", () => {
   it("empty array returns [] without calling fetch", async () => {
     let fetchCalled = false
-    globalThis.fetch = () => {
+    globalThis.fetch = ((() => {
       fetchCalled = true
       return Promise.resolve({ ok: true, json: () => Promise.resolve({}) } as Response)
-    }
+    }) as unknown as typeof globalThis.fetch)
 
     const result = await Effect.runPromise(fetchIssueStatesByIds(ENDPOINT, API_KEY, []))
 
@@ -185,10 +185,10 @@ describe("fetchIssueStatesByIds", () => {
 describe("fetchIssuesByStates", () => {
   it("empty array returns [] without calling fetch", async () => {
     let fetchCalled = false
-    globalThis.fetch = () => {
+    globalThis.fetch = ((() => {
       fetchCalled = true
       return Promise.resolve({ ok: true, json: () => Promise.resolve({}) } as Response)
-    }
+    }) as unknown as typeof globalThis.fetch)
 
     const result = await Effect.runPromise(fetchIssuesByStates(ENDPOINT, API_KEY, []))
 
@@ -199,13 +199,13 @@ describe("fetchIssuesByStates", () => {
 
 describe("error handling", () => {
   it("GraphQL errors response fails with linear_graphql_errors", async () => {
-    globalThis.fetch = () =>
+    globalThis.fetch = ((() =>
       Promise.resolve({
         ok: true,
         status: 200,
         json: () =>
           Promise.resolve({ errors: [{ message: "Unauthorized" }] }),
-      } as Response)
+      } as Response)) as unknown as typeof globalThis.fetch)
 
     const error = await Effect.runPromise(
       Effect.flip(fetchCandidateIssues(ENDPOINT, API_KEY, PROJECT_SLUG, ACTIVE_STATES))

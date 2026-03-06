@@ -1,0 +1,238 @@
+import { Effect, Ref, Stream } from "effect"
+import type { Issue, OrchestratorState, ResolvedConfig, AgentEvent } from "../types.js"
+import { updateRunningEntry, addTokenDelta, setRateLimits, isActiveState } from "./state.js"
+import { WorkspaceManager, TrackerClient, WorkflowStore, PromptEngine } from "../services.js"
+import { AgentEngine } from "../engine/agent.js"
+import type { AgentSession } from "../engine/agent.js"
+
+export function runWorker(
+  stateRef: Ref.Ref<OrchestratorState>,
+  issue: Issue,
+  attempt: number | null,
+  config: ResolvedConfig
+): Effect.Effect<
+  void,
+  unknown,
+  WorkspaceManager | TrackerClient | WorkflowStore | PromptEngine | AgentEngine
+> {
+  return Effect.gen(function* () {
+    const workspaceManager = yield* WorkspaceManager
+    const tracker = yield* TrackerClient
+    const store = yield* WorkflowStore
+    const promptEngine = yield* PromptEngine
+    const agentEngine = yield* AgentEngine
+
+    const workspace = yield* workspaceManager.createForIssue(issue.identifier)
+
+    yield* Ref.update(stateRef, (s) =>
+      updateRunningEntry(s, issue.id, (e) => ({ ...e }))
+    )
+
+    if (config.hooks.before_run) {
+      yield* Effect.catchCause(
+        workspaceManager.runHook("after_run", workspace.path),
+        (cause) =>
+          Effect.gen(function* () {
+            yield* Effect.logWarning(`before_run hook failed for ${issue.identifier}`)
+            return yield* Effect.failCause(cause)
+          })
+      )
+    }
+
+    const session: AgentSession = yield* Effect.catchCause(
+      agentEngine.createSession({
+        workspace: workspace.path,
+        cwd: workspace.path,
+        config,
+      }),
+      (cause) =>
+        Effect.gen(function* () {
+          yield* bestEffortAfterRun(workspaceManager, workspace.path)
+          return yield* Effect.failCause(cause)
+        })
+    )
+
+    yield* Ref.update(stateRef, (s) =>
+      updateRunningEntry(s, issue.id, (e) => ({
+        ...e,
+        session_id: session.sessionId,
+        thread_id: session.threadId,
+      }))
+    )
+
+    yield* Effect.catchCause(
+      turnsLoop(stateRef, issue, attempt, config, session, tracker, store, promptEngine),
+      (cause) =>
+        Effect.gen(function* () {
+          yield* Effect.catchCause(session.dispose(), () => Effect.void)
+          yield* bestEffortAfterRun(workspaceManager, workspace.path)
+          return yield* Effect.failCause(cause)
+        })
+    )
+
+    yield* Effect.catchCause(session.dispose(), () => Effect.void)
+    yield* bestEffortAfterRun(workspaceManager, workspace.path)
+  })
+}
+
+function bestEffortAfterRun(
+  workspaceManager: {
+    runHook(hook: "after_run" | "before_remove", workspacePath: string): Effect.Effect<void, never>
+  },
+  workspacePath: string
+): Effect.Effect<void> {
+  return Effect.catchCause(
+    workspaceManager.runHook("after_run", workspacePath),
+    () => Effect.void
+  )
+}
+
+function turnsLoop(
+  stateRef: Ref.Ref<OrchestratorState>,
+  issue: Issue,
+  attempt: number | null,
+  config: ResolvedConfig,
+  session: AgentSession,
+  tracker: { fetchIssueStatesByIds(ids: ReadonlyArray<string>): Effect.Effect<ReadonlyArray<Issue>, unknown> },
+  store: { get(): Effect.Effect<{ readonly prompt_template: string }, unknown> },
+  promptEngine: { render(template: string, issue: Issue, attempt: number | null): Effect.Effect<string, unknown> }
+): Effect.Effect<void, unknown> {
+  return Effect.gen(function* () {
+    const maxTurns = config.agent.max_turns
+    let currentIssue = issue
+    let turnNumber = 1
+
+    while (true) {
+      const workflow = yield* store.get()
+      const isContinuation = turnNumber > 1
+      const prompt = yield* promptEngine.render(
+        isContinuation
+          ? "Continue working on the issue. Check the current state and proceed."
+          : workflow.prompt_template,
+        currentIssue,
+        attempt
+      )
+
+      yield* Ref.update(stateRef, (s) =>
+        updateRunningEntry(s, currentIssue.id, (e) => ({
+          ...e,
+          turn_count: turnNumber,
+        }))
+      )
+
+      const turnStream = session.runTurn({
+        prompt,
+        title: currentIssue.title,
+        continuation: isContinuation,
+      })
+
+      yield* Stream.runForEach(turnStream, (event: AgentEvent) =>
+        handleAgentEvent(stateRef, currentIssue.id, event)
+      )
+
+      const refreshedIssues = yield* tracker.fetchIssueStatesByIds([currentIssue.id])
+      const refreshedIssue = refreshedIssues.find((i: Issue) => i.id === currentIssue.id)
+      if (refreshedIssue) {
+        currentIssue = refreshedIssue
+      }
+
+      if (!isActiveState(currentIssue.state, config.tracker.active_states)) break
+      if (turnNumber >= maxTurns) break
+
+      turnNumber++
+    }
+  })
+}
+
+function handleAgentEvent(
+  stateRef: Ref.Ref<OrchestratorState>,
+  issueId: string,
+  event: AgentEvent
+): Effect.Effect<void> {
+  return Effect.gen(function* () {
+    const now = new Date()
+
+    switch (event.type) {
+      case "session_started":
+        yield* Ref.update(stateRef, (s) =>
+          updateRunningEntry(s, issueId, (e) => ({
+            ...e,
+            session_id: event.sessionId,
+            codex_app_server_pid: event.pid ?? null,
+            last_codex_event: "session_started",
+            last_codex_timestamp: now,
+          }))
+        )
+        break
+
+      case "token_usage":
+        yield* Ref.update(stateRef, (s) => {
+          const entry = s.running.get(issueId)
+          if (!entry) return s
+
+          const inputDelta = Math.max(0, event.input - entry.last_reported_input_tokens)
+          const outputDelta = Math.max(0, event.output - entry.last_reported_output_tokens)
+          const totalDelta = Math.max(0, event.total - entry.last_reported_total_tokens)
+
+          const updated = updateRunningEntry(s, issueId, (e) => ({
+            ...e,
+            codex_input_tokens: e.codex_input_tokens + inputDelta,
+            codex_output_tokens: e.codex_output_tokens + outputDelta,
+            codex_total_tokens: e.codex_total_tokens + totalDelta,
+            last_reported_input_tokens: Math.max(e.last_reported_input_tokens, event.input),
+            last_reported_output_tokens: Math.max(e.last_reported_output_tokens, event.output),
+            last_reported_total_tokens: Math.max(e.last_reported_total_tokens, event.total),
+            last_codex_event: "token_usage",
+            last_codex_timestamp: now,
+          }))
+
+          return addTokenDelta(updated, inputDelta, outputDelta, totalDelta)
+        })
+        break
+
+      case "rate_limit":
+        yield* Ref.update(stateRef, (s) =>
+          setRateLimits(
+            updateRunningEntry(s, issueId, (e) => ({
+              ...e,
+              last_codex_event: "rate_limit",
+              last_codex_timestamp: now,
+            })),
+            event.payload
+          )
+        )
+        break
+
+      case "turn_completed":
+        yield* Ref.update(stateRef, (s) =>
+          updateRunningEntry(s, issueId, (e) => ({
+            ...e,
+            last_codex_event: "turn_completed",
+            last_codex_timestamp: now,
+          }))
+        )
+        break
+
+      case "notification":
+        yield* Ref.update(stateRef, (s) =>
+          updateRunningEntry(s, issueId, (e) => ({
+            ...e,
+            last_codex_message: event.message,
+            last_codex_event: "notification",
+            last_codex_timestamp: now,
+          }))
+        )
+        break
+
+      default:
+        yield* Ref.update(stateRef, (s) =>
+          updateRunningEntry(s, issueId, (e) => ({
+            ...e,
+            last_codex_event: event.type,
+            last_codex_timestamp: now,
+          }))
+        )
+        break
+    }
+  })
+}

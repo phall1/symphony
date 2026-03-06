@@ -1,0 +1,9 @@
+src/tracker/index.test.ts(22,3): error TS2741: Property 'preconnect' is missing in type '() => Promise<Response>' but required in type 'typeof fetch'.
+src/tracker/index.test.ts(31,3): error TS2741: Property 'preconnect' is missing in type '() => Promise<Response>' but required in type 'typeof fetch'.
+src/tracker/index.test.ts(85,5): error TS2741: Property 'preconnect' is missing in type '() => Promise<Response>' but required in type 'typeof fetch'.
+src/tracker/index.test.ts(156,5): error TS2741: Property 'preconnect' is missing in type '() => Promise<Response>' but required in type 'typeof fetch'.
+src/tracker/index.test.ts(188,5): error TS2741: Property 'preconnect' is missing in type '() => Promise<Response>' but required in type 'typeof fetch'.
+src/tracker/index.test.ts(202,5): error TS2741: Property 'preconnect' is missing in type '() => Promise<Response>' but required in type 'typeof fetch'.
+---
+Exit code: 0
+Only pre-existing tracker test errors (preconnect property). Zero codex errors.
