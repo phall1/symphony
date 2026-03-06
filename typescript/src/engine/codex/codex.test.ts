@@ -153,11 +153,7 @@ describe("§17.5 Codex engine conformance", () => {
     expect(result.sessionId).toBe("thread-abc-turn-xyz")
   })
 
-  // ── 6 ─────────────────────────────────────────────────────────────────────
-
   it("6. read_timeout_ms enforced during startup: hanging protocol times out with AgentEngineError", async () => {
-    // A protocol whose sendRequest creates a fresh empty queue and waits on it with a 50 ms
-    // timeout — simulating a Codex process that never responds within read_timeout_ms.
     const hangingProtocol: CodexProtocol = {
       sendRequest: () =>
         Queue.unbounded<string>().pipe(
@@ -186,13 +182,10 @@ describe("§17.5 Codex engine conformance", () => {
     expect(error.message).toContain("response_timeout")
   })
 
-  // ── 7 ─────────────────────────────────────────────────────────────────────
-
   it("7. turn_timeout_ms enforced: empty queue fails with turn_timeout AgentSessionError", async () => {
     const queue = await Effect.runPromise(Queue.unbounded<string>())
 
     const error = await Effect.runPromise(
-      // 50 ms turn timeout — queue is empty so no message ever arrives
       Effect.flip(Stream.runDrain(streamTurn(queue, makeSuccessProtocol(), 50))),
     )
 
@@ -200,14 +193,12 @@ describe("§17.5 Codex engine conformance", () => {
     expect(error.message).toContain("turn_timeout")
   })
 
-  // ── 8 ─────────────────────────────────────────────────────────────────────
-
   it("8. partial JSON lines are buffered until newline before being emitted", async () => {
     const enc = new TextEncoder()
     const chunks: Uint8Array[] = [
-      enc.encode('{"method":"turn/'),     // partial — no newline
-      enc.encode('completed"}\n'),         // rest of line + newline
-      enc.encode('{"method":"notification","msg":"hi"}\n'), // complete second line
+      enc.encode('{"method":"turn/'),
+      enc.encode('completed"}\n'),
+      enc.encode('{"method":"notification","msg":"hi"}\n'),
     ]
 
     const lines = await Effect.runPromise(
@@ -219,14 +210,9 @@ describe("§17.5 Codex engine conformance", () => {
     expect(lines[1]).toBe('{"method":"notification","msg":"hi"}')
   })
 
-  // ── 9 ─────────────────────────────────────────────────────────────────────
-
   it("9. stdout and stderr handled separately: only stdout lines reach the line queue", async () => {
     const spawnSpy = vi.spyOn(Bun, "spawn").mockReturnValueOnce(
-      makeBunSpawnMock(
-        '{"method":"turn/completed"}\n', // stdout  — parsed as protocol JSON
-        "Starting Codex... [debug info]\n", // stderr — must NOT appear in lines
-      ),
+      makeBunSpawnMock('{"method":"turn/completed"}\n', "Starting Codex... [debug info]\n"),
     )
 
     const lines = await Effect.runPromise(
@@ -241,8 +227,6 @@ describe("§17.5 Codex engine conformance", () => {
     expect(lines).toEqual(['{"method":"turn/completed"}'])
     spawnSpy.mockRestore()
   })
-
-  // ── 10 ────────────────────────────────────────────────────────────────────
 
   it("10. non-JSON stderr lines are logged but do not crash parsing", async () => {
     const spawnSpy = vi.spyOn(Bun, "spawn").mockReturnValueOnce(
@@ -252,7 +236,6 @@ describe("§17.5 Codex engine conformance", () => {
       ),
     )
 
-    // Must not throw despite malformed stderr
     const lines = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
@@ -265,8 +248,6 @@ describe("§17.5 Codex engine conformance", () => {
     expect(lines).toEqual(['{"method":"turn/completed"}'])
     spawnSpy.mockRestore()
   })
-
-  // ── 11 ────────────────────────────────────────────────────────────────────
 
   it("11. approval requests (all 4 spec variants) are auto-approved with approved:true", async () => {
     const APPROVAL_METHODS = [
@@ -305,8 +286,6 @@ describe("§17.5 Codex engine conformance", () => {
     }
   })
 
-  // ── 12 ────────────────────────────────────────────────────────────────────
-
   it("12. unsupported item/tool/call rejected with success:false without stalling session", async () => {
     const queue = await Effect.runPromise(Queue.unbounded<string>())
     const responses: Array<{ id: unknown; result: unknown }> = []
@@ -327,18 +306,14 @@ describe("§17.5 Codex engine conformance", () => {
 
     const events = await Effect.runPromise(Stream.runCollect(streamTurn(queue, protocol, 5000)))
 
-    // Rejected with structured error, NOT stalled
     expect(
       responses.some(
         (r) => r.id === "tool-1" && (r.result as Record<string, unknown>).success === false,
       ),
     ).toBe(true)
 
-    // Session didn't stall — stream completed with turn_completed
     expect(events.some((e) => e.type === "turn_completed")).toBe(true)
   })
-
-  // ── 13 ────────────────────────────────────────────────────────────────────
 
   it("13. user input requests hard-fail with turn_input_required AgentSessionError", async () => {
     const queue = await Effect.runPromise(Queue.unbounded<string>())
@@ -361,12 +336,9 @@ describe("§17.5 Codex engine conformance", () => {
     expect(error.message).toContain("turn_input_required")
   })
 
-  // ── 14 ────────────────────────────────────────────────────────────────────
-
   it("14. token/rate-limit payloads extracted from nested payload shapes", async () => {
     const queue = await Effect.runPromise(Queue.unbounded<string>())
 
-    // Nested camelCase shape from thread/tokenUsage/updated
     await Effect.runPromise(
       Queue.offer(
         queue,

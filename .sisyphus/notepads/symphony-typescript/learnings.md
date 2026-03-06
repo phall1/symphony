@@ -651,3 +651,194 @@ function makeSseResponse(events: object[]): Response {
 - ✓ 11/11 tests pass in `bun run test src/engine/opencode/`
 - ✓ Pre-existing codex.test.ts failures (Bun is not defined) unaffected
 - ✓ Evidence saved to `.sisyphus/evidence/t18-opencode-tests.txt`
+
+## T14: Config + Workspace + Tracker Conformance Tests — COMPLETED
+
+### Test Counts
+- `config/index.test.ts`: 9 → 19 tests (+10 new)
+- `workspace/index.test.ts`: 11 → 15 tests (+4 new)
+- `tracker/index.test.ts`: 8 → 13 tests (+5 new)
+- Total new: 19 tests
+
+### §17.1 Config Tests Added
+1. `workflow_parse_error` for invalid YAML syntax (unmatched bracket)
+2. Explicit file path used when provided (loadWorkflowFile with real tmp file)
+3. All defaults apply when optional values missing (polling_ms=30000, max_concurrent=10, etc.)
+4. `codex.command` preserved without $VAR expansion — only `api_key` and path values get expanded
+5. Per-state concurrency: keys trimmed+lowercased, non-positive values dropped
+6. `$VAR` indirection for tracker.api_key
+7. `$VAR` then `~` expansion in workspace.root
+8. `tracker.kind` validation enforces "linear"
+9. Watcher: file change re-reads and re-applies config (using polling loop not fixed timeout)
+10. Watcher: invalid YAML keeps last-known-good config
+
+### §17.2 Workspace Tests Added
+1. `workspacePath(root, id)` deterministic — same id same path, different ids different paths
+2. Workspace.path equals `join(root, sanitizedKey)` — confirmed agent cwd is correct
+3. `before_remove` hook failure is ignored (best-effort via catchCause)
+
+### §17.3 Tracker Tests Added
+1. `fetchCandidateIssues` sends `projectSlug` + `activeStates` as GraphQL variables
+2. CANDIDATE_ISSUES_QUERY contains `slugId` field name
+3. ISSUES_BY_IDS_QUERY contains `[ID!]` GraphQL type annotation
+4. Network error (fetch rejects) → `linear_api_request` TrackerError
+5. Response with no `data` field → `linear_unknown_payload` TrackerError
+
+### Key Patterns
+- **Watcher timing**: Use polling loop (check every 100ms up to 4s) instead of fixed timeout — more reliable than `await new Promise(r => setTimeout(r, N))`
+- **Chokidar init delay**: Add 300ms delay after `watchWorkflowFile` before writing file — chokidar needs a moment to set up the FSEvents watcher
+- **Capture fetch body**: Helper `captureAndMockFetch()` intercepts `options.body` and parses it as JSON for query/variable inspection
+- **Watcher test timeout**: Set to 8000ms with 5s safety margin
+
+### Pre-existing Failures (NOT from T14)
+- `codex.test.ts` 3 tests: "Bun is not defined" — vitest doesn't expose Bun globals
+- These were already failing before T14
+
+### Evidence
+- `.sisyphus/evidence/t14-tests.txt` — full vitest run output (47/47 passing)
+
+## T17: Observability + CLI Conformance Tests — COMPLETED
+
+### Effect v4 Logger Annotation Capture Pattern (for tests)
+```typescript
+import { Logger, References } from "effect"
+const captured: Record<string, unknown>[] = []
+const captureLogger = Logger.make<unknown, void>((options) => {
+  captured.push(options.fiber.getRef(References.CurrentLogAnnotations) as Record<string, unknown>)
+})
+await Effect.runPromise(
+  Effect.provide(
+    withIssueContext("id", "MT-1")(Effect.logInfo("test")),
+    Layer.mergeAll(Logger.layer([captureLogger]), Layer.succeed(References.MinimumLogLevel, "Trace"))
+  )
+)
+expect(captured[0]!["issue_id"]).toBe("id")
+```
+
+### Vitest: Bun Global Not Available in Worker Threads
+- `Bun.spawn` is a global in bun runtime but NOT in vitest's Node-compatible workers
+- ReferenceError: Bun is not defined when using `vi.spyOn(Bun, "spawn")`
+- Fix: `vi.stubGlobal("Bun", { spawn: vi.fn() })` in `beforeAll`, `vi.unstubAllGlobals()` in `afterAll`
+- Check first: `if (typeof (globalThis as Record<string, unknown>)["Bun"] === "undefined")`
+
+### CLI Testing: Extract parseArgs for Testability
+- `cli/index.ts` calls `runCLI()` at the bottom — importing it would trigger side effects
+- Solution: extract `parseArgs`, `printUsage`, `ParsedArgs`, `ParseResult` to `cli/args.ts`
+- Test `parseArgs` directly for parsing logic (pure function)
+- Use `spawnSync("bun", ["run", CLI_ENTRY, ...args], { encoding: "utf8" })` for subprocess tests
+
+### Subprocess CLI Tests Pattern
+```typescript
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const TS_DIR = resolve(__dirname, "../..")  // from src/cli to typescript/
+const CLI_ENTRY = resolve(TS_DIR, "src/cli/index.ts")
+const result = spawnSync("bun", ["run", CLI_ENTRY, "./missing.md"], {
+  cwd: TS_DIR,
+  env: { ...process.env, PATH: "/Users/phall/.bun/bin:" + process.env.PATH },
+  encoding: "utf8",
+  timeout: 10_000,
+})
+expect(result.status).toBe(1)
+expect(result.stderr).toMatch(/workflow file not found/)
+```
+
+### Test for Missing Default WORKFLOW.md
+- Create temp dir with `mkdtempSync`, run CLI from that dir with no args
+- CLI defaults to `./WORKFLOW.md` which doesn't exist in tmpdir → exits 1
+- Always clean up with `rmSync(tmpDir, { recursive: true, force: true })` in finally
+
+### buildSnapshot as Pure Function
+- `buildSnapshot(state: OrchestratorState): RuntimeSnapshot` — pure, no Effects
+- Test directly with mock state (new Map(), new Set(), etc.)
+- seconds_running in output = state.codex_totals.seconds_running + active elapsed
+
+## T16: Codex Engine Conformance Tests — COMPLETED
+
+### Files Changed
+- `typescript/src/engine/codex/process.ts` — exported `splitIntoLines` (was `const`, now `export const`)
+- `typescript/src/engine/codex/codex.test.ts` — 14 new conformance tests (NEW FILE)
+
+### Test Strategy per §17.5 Bullet
+
+1. **Launch command** — `vi.spyOn(Bun, "spawn")` verifies args = `["bash", "-lc", "codex app-server"]` and `cwd`
+2. **Handshake sequence** — `performHandshake` with mock protocol that records `req:method`/`notif:method` calls
+3. **initialize payload** — capture params in mock sendRequest, assert `clientInfo` + `capabilities`
+4. **Policy defaults** — capture thread/start params, assert `approvalPolicy` + `sandbox` fields present
+5. **Nested ID parsing** — verify `performHandshake` result has `threadId`, `turnId`, `sessionId`
+6. **read_timeout_ms** — mock protocol whose `sendRequest` blocks on empty Queue with 50ms timeout → `AgentEngineError` with "response_timeout"
+7. **turn_timeout_ms** — empty `Queue.unbounded<string>()` with 50ms timeout → `AgentSessionError` with "turn_timeout"
+8. **Partial line buffering** — exported `splitIntoLines` tested with `Stream.fromIterable(chunks)` where chunks split mid-JSON
+9. **Stdout/stderr separation** — `Bun.spawn` mock with distinct stdout + stderr, verify `proc.lines` only has stdout
+10. **Non-JSON stderr** — stderr with `"not json!"` — `proc.lines` unaffected, no crash
+11. **Approval auto-approve** — feed each of 4 approval methods into Queue, verify `sendResponse` called with `{approved:true}`
+12. **Unsupported tool** — feed `item/tool/call` → `sendResponse` called with `{success:false}`, stream completes
+13. **User input hard-fail** — feed `item/tool/requestUserInput` → `Effect.flip(Stream.runDrain(...))` gives `AgentSessionError` with "turn_input_required"
+14. **Token extraction** — `thread/tokenUsage/updated` with nested camelCase `params.usage.inputTokens/outputTokens/totalTokens` → `token_usage` event
+
+### Key Patterns
+- `vi.spyOn(Bun, "spawn").mockReturnValueOnce(makeBunSpawnMock(...))` works in vitest on Bun
+- `Queue.unbounded<string>()` returns an Effect — `await Effect.runPromise(Queue.unbounded<string>())`
+- `Effect.flip(Stream.runDrain(failingStream))` — gets error as success for assertions
+- `Stream.runCollect` returns `ReadonlyArray<A>` (not Chunk) in v4 beta.27
+- `Effect.scoped(launchCodexProcess(...))` properly cleans up mock subprocess scope
+- Exporting `splitIntoLines` enables direct unit testing of the buffering logic
+
+### Verification
+- ✓ 14/14 tests pass
+- ✓ 0 LSP errors in `codex.test.ts` and `process.ts`
+- ✓ Full suite: 134/134 tests pass (no regressions)
+- ✓ Evidence saved to `.sisyphus/evidence/t16-codex-tests.txt`
+
+## Layer.unwrap for dynamic layer construction (2026-03-05)
+- `Layer.flatMap` callback must return a `Layer`, not an `Effect<Layer>`. Using `as any` hid the type error.
+- Correct pattern: `Layer.unwrap(effectThatReturnsLayer).pipe(Layer.provide(deps))` — runs an Effect to get a Layer, then provides the dependencies that effect needs.
+- `Layer.unwrap` signature: `(Effect<Layer<A, E1, R1>, E, R>) => Layer<A, E | E1, R1 | Exclude<R, Scope>>`
+
+## OrchestratorLive provides OrchestratorStateRef
+- `OrchestratorLive: Layer<OrchestratorStateRef, never, OrchestratorDeps>`
+- `OrchestratorDeps = WorkflowStore | TrackerClient | WorkspaceManager | OrchestratorStateRef | PromptEngine | AgentEngine`
+- `makeObservabilityLive(port): Layer<never, never, OrchestratorStateRef>` — needs OrchestratorStateRef, outputs nothing (side effects only)
+- Both can coexist in `Layer.mergeAll` because Effect resolves the dependency graph automatically
+
+## ParsedArgs.port is `number | null`
+- Default port=0 in main() means "don't start HTTP server" (or start on ephemeral port)
+- CLI passes `port ?? undefined` to use the default parameter value when port is null
+
+## TF3: Effect Layer Composition Fix — COMPLETED
+
+### Root Cause 1: `Layer.mergeAll` doesn't wire cross-layer dependencies
+- `Layer.mergeAll(A, B, C)` merges outputs but does NOT provide A's output to B's requirements
+- `OrchestratorLive` requires `WorkflowStore` but didn't get it from `workflowStoreLayer` via `mergeAll`
+- Fix: Use `Layer.provide` to explicitly wire: `OrchestratorLive.pipe(Layer.provide(depsLayer))`
+
+### Root Cause 2: Circular dependency — `OrchestratorDeps` includes `OrchestratorStateRef`
+- `OrchestratorDeps` includes `OrchestratorStateRef`, but `OrchestratorLive` *provides* `OrchestratorStateRef`
+- `tick()` uses `yield* OrchestratorStateRef` → makes poll loop require `OrchestratorStateRef`
+- Fix: `Effect.provideService(OrchestratorStateRef, orchestratorStateRef)` on the poll loop BEFORE `Effect.forkChild`
+- This removes `OrchestratorStateRef` from the forked effect's type requirements
+- `OrchestratorLive`'s type becomes: `Layer<OrchestratorStateRef, never, WorkflowStore | TrackerClient | WorkspaceManager | PromptEngine | AgentEngine>`
+
+### Root Cause 3: Two separate refs (stateRef + obsRef)
+- Original code had `stateRef` for orchestrator state and `obsRef` for observability
+- `notifyObservers` copied stateRef → obsRef, but the two could diverge
+- Fix: Use a single ref for both, return the same ref as the OrchestratorStateRef service
+
+### Layer.provide wiring pattern (correct)
+```typescript
+const depsLayer = Layer.mergeAll(leafA, leafB, leafC)
+const orchestratorLayer = OrchestratorLive.pipe(Layer.provide(depsLayer))
+const observabilityLayer = makeObservabilityLive(port).pipe(Layer.provide(orchestratorLayer))
+const MainLayer = Layer.mergeAll(depsLayer, orchestratorLayer, observabilityLayer)
+```
+
+### Key insight: `Effect.provideService` removes requirement from forked effect
+```typescript
+// pollLoop requires OrchestratorStateRef | WorkflowStore | ...
+// After provideService, OrchestratorStateRef is removed
+yield* Effect.forkChild(
+  pollLoop(stateRef, interval).pipe(
+    Effect.provideService(OrchestratorStateRef, { ref: stateRef })
+  )
+)
+// Remaining requirements (WorkflowStore etc.) come from the parent Layer.effect environment
+```

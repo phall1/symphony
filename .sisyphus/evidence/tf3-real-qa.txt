@@ -1,0 +1,32 @@
+=== TYPECHECK ===
+$ bun run typecheck
+$ tsc --noEmit
+(exit 0 — no errors)
+
+=== TESTS ===
+$ bun run test
+ Test Files  10 passed (10)
+      Tests  134 passed (134)
+
+=== REAL QA: SERVER START + CURL ===
+$ LINEAR_API_KEY=fake bun run src/cli/index.ts ../elixir/WORKFLOW.md --port 3456
+
+[20:55:09.913] WARN (#9): Startup terminal cleanup: failed to fetch terminal issues, continuing
+[20:55:09.934] INFO (#25): HTTP server started on http://127.0.0.1:3456
+
+=== curl /api/v1/state ===
+{"generated_at":"2026-03-06T01:55:13.458Z","counts":{"running":0,"retrying":0},"running":[],"retrying":[],"codex_totals":{"input_tokens":0,"output_tokens":0,"total_tokens":0,"seconds_running":0},"rate_limits":null}
+
+=== curl / ===
+Symphony is running.
+
+=== SERVER SHUTDOWN ===
+[20:55:13.482] INFO (#40): Orchestrator shutting down
+EXIT:130
+
+=== VERIFICATION CHECKLIST ===
+[x] bun run typecheck exits 0
+[x] bun run test passes all 134 tests
+[x] Server starts, logs appear, HTTP server answers
+[x] /api/v1/state returns JSON with running, retrying, codex_totals
+[x] Evidence saved to .sisyphus/evidence/tf3-real-qa.txt
