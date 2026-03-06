@@ -6,6 +6,7 @@ import { tmpdir } from "node:os"
 import {
   sanitizeWorkspaceKey,
   assertPathContainment,
+  workspacePath,
   makeWorkspaceManagerLive,
 } from "./index.js"
 import { runHookScript } from "./hooks.js"
@@ -193,5 +194,82 @@ describe("hook execution", () => {
       expect(result.failure._tag).toBe("WorkspaceError")
       expect(result.failure.code).toBe("hook_failed")
     }
+  })
+
+  it("before_remove hook failure does not propagate (§17.2 before_remove best-effort)", async () => {
+    const root = await makeTempDir()
+    const layer = makeWorkspaceManagerLive({
+      tracker: { kind: "linear", endpoint: "", api_key: "", project_slug: "", active_states: [], terminal_states: [] },
+      polling: { interval_ms: 30000 },
+      workspace: { root },
+      hooks: { after_create: null, before_run: null, after_run: null, before_remove: "exit 1", timeout_ms: 5000 },
+      agent: { max_concurrent_agents: 1, max_turns: 10, max_retry_backoff_ms: 5000, max_concurrent_agents_by_state: {}, engine: "codex" },
+      codex: { command: "codex", approval_policy: null, thread_sandbox: "", turn_sandbox_policy: null, turn_timeout_ms: 60000, read_timeout_ms: 30000, stall_timeout_ms: 30000 },
+      opencode: { mode: "per-workspace", server_url: null, model: "gpt-4o", agent: "opencode", port: 3000 },
+      server: { port: null },
+    })
+
+    const { WorkspaceManager } = await import("../services.js")
+    await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          const svc = yield* WorkspaceManager
+          yield* svc.createForIssue("MT-BR-001")
+        }),
+        layer
+      )
+    )
+    await expect(
+      Effect.runPromise(
+        Effect.provide(
+          Effect.gen(function* () {
+            const svc = yield* WorkspaceManager
+            yield* svc.removeForIssue("MT-BR-001")
+          }),
+          layer
+        )
+      )
+    ).resolves.toBeUndefined()
+  })
+})
+
+describe("workspacePath", () => {
+  it("produces the same path for the same identifier (§17.2 deterministic)", () => {
+    const root = "/tmp/test-root"
+    const p1 = workspacePath(root, "MT-001")
+    const p2 = workspacePath(root, "MT-001")
+    expect(p1).toBe(p2)
+  })
+
+  it("produces different paths for different identifiers (§17.2 deterministic)", () => {
+    const root = "/tmp/test-root"
+    expect(workspacePath(root, "MT-001")).not.toBe(workspacePath(root, "MT-002"))
+  })
+
+  it("workspace path uses sanitized identifier under root (§17.2 agent cwd)", async () => {
+    const root = await makeTempDir()
+    const layer = makeWorkspaceManagerLive({
+      tracker: { kind: "linear", endpoint: "", api_key: "", project_slug: "", active_states: [], terminal_states: [] },
+      polling: { interval_ms: 30000 },
+      workspace: { root },
+      hooks: { after_create: null, before_run: null, after_run: null, before_remove: null, timeout_ms: 30000 },
+      agent: { max_concurrent_agents: 1, max_turns: 10, max_retry_backoff_ms: 5000, max_concurrent_agents_by_state: {}, engine: "codex" },
+      codex: { command: "codex", approval_policy: null, thread_sandbox: "", turn_sandbox_policy: null, turn_timeout_ms: 60000, read_timeout_ms: 30000, stall_timeout_ms: 30000 },
+      opencode: { mode: "per-workspace", server_url: null, model: "gpt-4o", agent: "opencode", port: 3000 },
+      server: { port: null },
+    })
+
+    const { WorkspaceManager } = await import("../services.js")
+    const result = await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          const svc = yield* WorkspaceManager
+          return yield* svc.createForIssue("MT-CWD-001")
+        }),
+        layer
+      )
+    )
+    expect(result.path).toBe(join(root, "MT-CWD-001"))
+    expect(result.workspace_key).toBe("MT-CWD-001")
   })
 })

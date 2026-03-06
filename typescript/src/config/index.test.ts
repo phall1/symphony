@@ -1,8 +1,26 @@
-import { describe, it, expect } from "vitest"
-import { Effect } from "effect"
-import { homedir } from "node:os"
+import { describe, it, expect, afterEach } from "vitest"
+import { Effect, Ref } from "effect"
+import { homedir, tmpdir } from "node:os"
+import { mkdtemp, writeFile, rm, readFile } from "node:fs/promises"
+import { join } from "node:path"
 import { parseWorkflowContent, loadWorkflowFile, resolveConfig, validateDispatchConfig } from "./index.js"
-import type { WorkflowError } from "../types.js"
+import { watchWorkflowFile } from "./watcher.js"
+import type { WorkflowDefinition, ResolvedConfig, WorkflowError } from "../types.js"
+
+let tempDirs: string[] = []
+
+async function makeTempDir(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "symphony-cfg-test-"))
+  tempDirs.push(dir)
+  return dir
+}
+
+afterEach(async () => {
+  for (const dir of tempDirs) {
+    await rm(dir, { recursive: true, force: true })
+  }
+  tempDirs = []
+})
 
 describe("parseWorkflowContent", () => {
   it("parses valid YAML front matter into config and prompt", () => {
@@ -28,6 +46,16 @@ describe("parseWorkflowContent", () => {
     }
     expect(caught).toMatchObject({ _tag: "WorkflowError", code: "workflow_front_matter_not_a_map" })
   })
+
+  it("throws workflow_parse_error for invalid YAML syntax (§17.1)", () => {
+    let caught: unknown
+    try {
+      parseWorkflowContent("---\nkey: [\n---\nbody")
+    } catch (e) {
+      caught = e
+    }
+    expect(caught).toMatchObject({ _tag: "WorkflowError", code: "workflow_parse_error" })
+  })
 })
 
 describe("loadWorkflowFile", () => {
@@ -36,6 +64,19 @@ describe("loadWorkflowFile", () => {
       Effect.flip(loadWorkflowFile("/nonexistent/path/symphony-test-file-xyz.md"))
     )
     expect((error as WorkflowError).code).toBe("missing_workflow_file")
+  })
+
+  it("succeeds loading from explicit file path and returns correct config", async () => {
+    const dir = await makeTempDir()
+    const filePath = join(dir, "WORKFLOW.md")
+    await writeFile(
+      filePath,
+      "---\ntracker:\n  kind: linear\n  project_slug: explicit-proj\n---\nExplicit prompt"
+    )
+
+    const result = await Effect.runPromise(loadWorkflowFile(filePath))
+    expect(result.config).toMatchObject({ tracker: { project_slug: "explicit-proj" } })
+    expect(result.prompt_template).toBe("Explicit prompt")
   })
 })
 
@@ -66,6 +107,80 @@ describe("resolveConfig", () => {
     })
     expect(config.tracker.active_states).toEqual(["Todo", "In Progress", "Review"])
   })
+
+  it("applies all defaults when optional values are missing", () => {
+    const config = resolveConfig({})
+    expect(config.polling.interval_ms).toBe(30000)
+    expect(config.agent.max_concurrent_agents).toBe(10)
+    expect(config.agent.max_turns).toBe(20)
+    expect(config.agent.max_retry_backoff_ms).toBe(300000)
+    expect(config.tracker.kind).toBe("linear")
+    expect(config.tracker.active_states).toEqual(["Todo", "In Progress"])
+    expect(config.tracker.terminal_states).toContain("Done")
+    expect(config.hooks.timeout_ms).toBe(60000)
+  })
+
+  it("preserves codex.command as-is without env var expansion", () => {
+    const saved = process.env["MY_CODEX_CMD"]
+    process.env["MY_CODEX_CMD"] = "resolved-binary"
+    try {
+      const config = resolveConfig({ codex: { command: "$MY_CODEX_CMD" } })
+      expect(config.codex.command).toBe("$MY_CODEX_CMD")
+    } finally {
+      if (saved === undefined) {
+        delete process.env["MY_CODEX_CMD"]
+      } else {
+        process.env["MY_CODEX_CMD"] = saved
+      }
+    }
+  })
+
+  it("normalizes state names to lowercase and ignores invalid values in max_concurrent_agents_by_state", () => {
+    const config = resolveConfig({
+      agent: {
+        max_concurrent_agents_by_state: {
+          "In Progress": 5,
+          "  REVIEW  ": 2,
+          "bad-negative": -1,
+          "bad-zero": 0,
+        } as Record<string, number>,
+      },
+    })
+    expect(config.agent.max_concurrent_agents_by_state["in progress"]).toBe(5)
+    expect(config.agent.max_concurrent_agents_by_state["review"]).toBe(2)
+    expect(config.agent.max_concurrent_agents_by_state["bad-negative"]).toBeUndefined()
+    expect(config.agent.max_concurrent_agents_by_state["bad-zero"]).toBeUndefined()
+  })
+
+  it("resolves $VAR in tracker.api_key from env (§17.1 $VAR)", () => {
+    const saved = process.env["TRACKER_KEY_TEST"]
+    process.env["TRACKER_KEY_TEST"] = "resolved-key-abc"
+    try {
+      const config = resolveConfig({ tracker: { api_key: "$TRACKER_KEY_TEST" } })
+      expect(config.tracker.api_key).toBe("resolved-key-abc")
+    } finally {
+      if (saved === undefined) {
+        delete process.env["TRACKER_KEY_TEST"]
+      } else {
+        process.env["TRACKER_KEY_TEST"] = saved
+      }
+    }
+  })
+
+  it("expands $VAR then ~ in workspace.root path value (§17.1 ~ expansion)", () => {
+    const saved = process.env["MY_WORKSPACE_ROOT"]
+    process.env["MY_WORKSPACE_ROOT"] = "~/my-workspaces"
+    try {
+      const config = resolveConfig({ workspace: { root: "$MY_WORKSPACE_ROOT" } })
+      expect(config.workspace.root).toBe(`${homedir()}/my-workspaces`)
+    } finally {
+      if (saved === undefined) {
+        delete process.env["MY_WORKSPACE_ROOT"]
+      } else {
+        process.env["MY_WORKSPACE_ROOT"] = saved
+      }
+    }
+  })
 })
 
 describe("validateDispatchConfig", () => {
@@ -83,4 +198,81 @@ describe("validateDispatchConfig", () => {
     const errors = validateDispatchConfig(config)
     expect(errors).toHaveLength(0)
   })
+
+  it("returns unsupported_tracker_kind error for non-linear tracker kind (§17.1 tracker.kind)", () => {
+    const config = resolveConfig({
+      tracker: {
+        kind: "github" as unknown as "linear",
+        api_key: "my-key",
+        project_slug: "proj",
+      },
+    })
+    const errors = validateDispatchConfig(config)
+    const kindError = errors.find((e) => e.code === "unsupported_tracker_kind")
+    expect(kindError).toBeDefined()
+  })
+})
+
+describe("watchWorkflowFile", () => {
+  it("file change triggers re-read and re-applies new config (§17.1 watcher)", async () => {
+    const dir = await makeTempDir()
+    const filePath = join(dir, "WORKFLOW.md")
+    await writeFile(
+      filePath,
+      "---\ntracker:\n  kind: linear\n  project_slug: original-slug\n---\nOriginal prompt"
+    )
+    const def = parseWorkflowContent(await readFile(filePath, "utf-8"))
+    const workflowRef = await Effect.runPromise(Ref.make<WorkflowDefinition>(def))
+    const resolvedRef = await Effect.runPromise(
+      Ref.make<ResolvedConfig>(resolveConfig(def.config))
+    )
+    const stop = await Effect.runPromise(
+      watchWorkflowFile(filePath, workflowRef, resolvedRef, () => {})
+    )
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    try {
+      await writeFile(
+        filePath,
+        "---\ntracker:\n  kind: linear\n  project_slug: updated-slug\n---\nUpdated prompt"
+      )
+      const deadline = Date.now() + 4000
+      let resolved = await Effect.runPromise(Ref.get(resolvedRef))
+      while (resolved.tracker.project_slug !== "updated-slug" && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 100))
+        resolved = await Effect.runPromise(Ref.get(resolvedRef))
+      }
+      expect(resolved.tracker.project_slug).toBe("updated-slug")
+      const workflow = await Effect.runPromise(Ref.get(workflowRef))
+      expect(workflow.prompt_template).toBe("Updated prompt")
+    } finally {
+      stop()
+    }
+  }, 8000)
+
+  it("invalid reload keeps last-known-good config (§17.1 last-known-good)", async () => {
+    const dir = await makeTempDir()
+    const filePath = join(dir, "WORKFLOW.md")
+    await writeFile(
+      filePath,
+      "---\ntracker:\n  kind: linear\n  project_slug: good-config\n---\nGood prompt"
+    )
+    const def = parseWorkflowContent(await readFile(filePath, "utf-8"))
+    const workflowRef = await Effect.runPromise(Ref.make<WorkflowDefinition>(def))
+    const resolvedRef = await Effect.runPromise(
+      Ref.make<ResolvedConfig>(resolveConfig(def.config))
+    )
+    const errors: unknown[] = []
+    const stop = await Effect.runPromise(
+      watchWorkflowFile(filePath, workflowRef, resolvedRef, (e) => errors.push(e))
+    )
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    try {
+      await writeFile(filePath, "---\nkey: [\n---\nbody")
+      await new Promise((resolve) => setTimeout(resolve, 1500))
+      const resolved = await Effect.runPromise(Ref.get(resolvedRef))
+      expect(resolved.tracker.project_slug).toBe("good-config")
+    } finally {
+      stop()
+    }
+  }, 8000)
 })

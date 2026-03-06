@@ -66,6 +66,21 @@ function singlePageResponse(nodes: unknown[]) {
   }
 }
 
+function captureAndMockFetch(response: unknown): { lastBody: () => Record<string, unknown> } {
+  let captured: Record<string, unknown> = {}
+  globalThis.fetch = (((_url: unknown, options: unknown) => {
+    if (options && typeof options === "object" && "body" in options) {
+      captured = JSON.parse(options.body as string) as Record<string, unknown>
+    }
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(response),
+    } as Response)
+  }) as unknown as typeof globalThis.fetch)
+  return { lastBody: () => captured }
+}
+
 describe("fetchCandidateIssues", () => {
   it("single page response returns normalized issues with labels lowercased", async () => {
     mockFetch(singlePageResponse([makeIssueNode()]))
@@ -148,6 +163,20 @@ describe("fetchCandidateIssues", () => {
     expect(result[0]?.blocked_by[0]?.identifier).toBe("SYM-0")
     expect(result[0]?.blocked_by[0]?.state).toBe("In Progress")
   })
+
+  it("sends active states and project slug as query variables (§17.3 candidate fetch uses active states + slug)", async () => {
+    const { lastBody } = captureAndMockFetch(singlePageResponse([]))
+    await Effect.runPromise(fetchCandidateIssues(ENDPOINT, API_KEY, PROJECT_SLUG, ACTIVE_STATES))
+    const vars = lastBody().variables as Record<string, unknown>
+    expect(vars["projectSlug"]).toBe(PROJECT_SLUG)
+    expect(vars["activeStates"]).toEqual(ACTIVE_STATES)
+  })
+
+  it("query uses slugId field for project filtering (§17.3 slugId)", async () => {
+    const { lastBody } = captureAndMockFetch(singlePageResponse([]))
+    await Effect.runPromise(fetchCandidateIssues(ENDPOINT, API_KEY, PROJECT_SLUG, ACTIVE_STATES))
+    expect(lastBody().query).toContain("slugId")
+  })
 })
 
 describe("fetchIssueStatesByIds", () => {
@@ -179,6 +208,14 @@ describe("fetchIssueStatesByIds", () => {
 
     expect(result).toHaveLength(1)
     expect(result[0]?.state).toBe("Done")
+  })
+
+  it("query uses GraphQL ID typing [ID!] (§17.3 [ID!] typing)", async () => {
+    const { lastBody } = captureAndMockFetch({
+      data: { issues: { nodes: [] } },
+    })
+    await Effect.runPromise(fetchIssueStatesByIds(ENDPOINT, API_KEY, ["id-1"]))
+    expect(lastBody().query).toContain("[ID!]")
   })
 })
 
@@ -224,5 +261,35 @@ describe("error handling", () => {
 
     expect(error._tag).toBe("TrackerError")
     expect(error.code).toBe("linear_api_status")
+  })
+
+  it("network error fails with linear_api_request (§17.3 request error)", async () => {
+    globalThis.fetch = ((() =>
+      Promise.reject(new Error("Network connection failed"))
+    ) as unknown as typeof globalThis.fetch)
+
+    const error = await Effect.runPromise(
+      Effect.flip(fetchCandidateIssues(ENDPOINT, API_KEY, PROJECT_SLUG, ACTIVE_STATES))
+    )
+
+    expect(error._tag).toBe("TrackerError")
+    expect(error.code).toBe("linear_api_request")
+  })
+
+  it("response with no data field fails with linear_unknown_payload (§17.3 malformed payload)", async () => {
+    globalThis.fetch = ((() =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ noDataField: true }),
+      } as Response)
+    ) as unknown as typeof globalThis.fetch)
+
+    const error = await Effect.runPromise(
+      Effect.flip(fetchCandidateIssues(ENDPOINT, API_KEY, PROJECT_SLUG, ACTIVE_STATES))
+    )
+
+    expect(error._tag).toBe("TrackerError")
+    expect(error.code).toBe("linear_unknown_payload")
   })
 })

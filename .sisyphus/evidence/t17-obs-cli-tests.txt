@@ -1,0 +1,95 @@
+T17: Observability + CLI Conformance Tests
+==========================================
+Date: 2026-03-05
+Status: COMPLETE — 134/134 tests pass
+
+FILES CREATED
+-------------
+typescript/src/observability/observability.test.ts  — 10 tests (§17.6)
+typescript/src/cli/cli.test.ts                       — 10 tests (§17.7)
+typescript/src/cli/args.ts                           — extracted parseArgs (pure, testable)
+
+FILES MODIFIED
+--------------
+typescript/src/cli/index.ts  — import parseArgs/printUsage from ./args.js
+typescript/src/engine/codex/codex.test.ts  — added beforeAll/afterAll Bun global stub (pre-existing bug fix)
+
+§17.6 OBSERVABILITY TESTS (observability.test.ts)
+---------------------------------------------------
+1. buildSnapshot returns correct shape on empty state
+   → generated_at ISO string, counts={running:0,retrying:0}, rate_limits=null
+
+2. buildSnapshot includes running rows with correct fields
+   → issue_id, issue_identifier, session_id, turn_count, state, tokens per-entry
+
+3. buildSnapshot includes retry rows with correct fields
+   → issue_id, issue_identifier, attempt, error, due_at ISO string
+
+4. Token/rate-limit aggregation: accumulated totals flow through to snapshot
+   → codex_totals reflect state totals; seconds_running >= cumulative; rate_limits passed through
+   → Multiple running entries each appear as separate rows
+
+5. validateDispatchConfig returns empty array for valid config
+   → Confirms happy-path: no false positive errors
+
+6. validateDispatchConfig returns structured errors with human-readable messages
+   → Each error has _tag:"ConfigError", message.length > 10 (operator-visible)
+
+7. withIssueContext annotates Effects with issue_id and issue_identifier
+   → Captured via custom Logger.make + References.CurrentLogAnnotations
+
+8. withSessionContext annotates Effects with session_id
+   → Same capture approach — session_id present in annotations
+
+9. Effect.logInfo/logWarning/logError have never on error channel
+   → Effect cannot fail from logging; result = "orchestration continued"
+
+10. withIssueContext + withSessionContext preserve effect success through logging
+    → Nested context helpers; annotated log emits; Effect returns 42
+
+§17.7 CLI TESTS (cli.test.ts)
+------------------------------
+1. parseArgs returns explicit path when provided
+   → workflowPath = "./custom-workflow.md"
+
+2. parseArgs returns explicit relative path
+   → workflowPath = "path/to/my-workflow.md"
+
+3. parseArgs defaults to ./WORKFLOW.md when no positional arg given
+   → workflowPath = "./WORKFLOW.md"
+
+4. parseArgs defaults to ./WORKFLOW.md even when --port given without path
+   → workflowPath = "./WORKFLOW.md", port = 3000
+
+5. subprocess: exits 1 with error message when explicit path does not exist
+   → exit status 1, stderr matches /workflow file not found/
+
+6. subprocess: error message includes the resolved path
+   → stderr matches /missing-workflow-test\.md/
+
+7. subprocess: exits 1 when run from tmpdir with no WORKFLOW.md and no path given
+   → exit status 1, stderr matches /workflow file not found/
+
+8. subprocess: error output is human-readable — not a raw stack trace
+   → stderr matches /^Error:/m, does NOT match /at Object\.<anonymous>/ or /TypeError:/
+
+9. parseArgs returns "error" for unknown flags
+   → parseArgs(["bun","symphony","--unknown-flag"]) === "error"
+
+10. parseArgs returns null for --help flag
+    → parseArgs(["bun","symphony","--help"]) === null
+
+TEST RUN OUTPUT
+---------------
+ Test Files  10 passed (10)
+      Tests  134 passed (134)
+   Start at  20:31:33
+   Duration  2.92s
+
+NOTES
+-----
+- Codex test fix: vi.stubGlobal("Bun", { spawn: vi.fn() }) in beforeAll/afterAll
+  (Bun is not defined in vitest's Node-compatible worker env; fix is minimal/safe)
+- parseArgs extracted to cli/args.ts so tests can import it without running runCLI()
+- Subprocess tests use spawnSync from node:child_process with bun binary
+- Logger annotation tests use Logger.make + References.CurrentLogAnnotations capture pattern

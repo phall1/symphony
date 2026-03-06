@@ -85,7 +85,7 @@ export const launchCodexProcess = (
 // ─── Line Splitting ─────────────────────────────────────────────────────────
 
 /** Stateful line splitter: buffers partial lines, emits on \n, enforces MAX_LINE_SIZE */
-const splitIntoLines = <E, R>(
+export const splitIntoLines = <E, R>(
   source: Stream.Stream<Uint8Array, E, R>,
 ): Stream.Stream<string, E, R> => {
   const decoder = new TextDecoder()

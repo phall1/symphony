@@ -1,0 +1,14 @@
+$ vitest run src/orchestrator/orchestrator.test.ts
+
+ RUN  v3.2.4 /Users/phall/workspace/symphony/typescript
+
+stdout | src/orchestrator/orchestrator.test.ts > stall detection — §17.4 bullet 12 > stalled session is removed from running and a retry is scheduled
+[20:30:46.846] WARN (#88): Issue stalled: issue_id=issue-1 elapsed_ms=5000
+
+ ✓ src/orchestrator/orchestrator.test.ts (28 tests) 19ms
+
+ Test Files  1 passed (1)
+      Tests  28 passed (28)
+   Start at  20:30:46
+   Duration  466ms (transform 66ms, setup 0ms, collect 221ms, tests 19ms, environment 0ms, prepare 49ms)
+

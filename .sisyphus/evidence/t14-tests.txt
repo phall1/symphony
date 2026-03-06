@@ -1,0 +1,17 @@
+$ vitest run src/config/ src/workspace/ src/tracker/
+
+ RUN  v3.2.4 /Users/phall/workspace/symphony/typescript
+
+ ✓ src/tracker/index.test.ts (13 tests) 5ms
+[WorkspaceManager] after_run hook failed for /var/folders/24/pv8lrvpx06s3lbc6_g_0hq980000gn/T/symphony-test-ey7Ns1, ignoring
+[WorkspaceManager] before_remove hook failed for MT-BR-001, continuing
+ ✓ src/workspace/index.test.ts (15 tests) 72ms
+ ✓ src/config/index.test.ts (19 tests) 2224ms
+   ✓ watchWorkflowFile > file change triggers re-read and re-applies new config (§17.1 watcher)  407ms
+   ✓ watchWorkflowFile > invalid reload keeps last-known-good config (§17.1 last-known-good)  1805ms
+
+ Test Files  3 passed (3)
+      Tests  47 passed (47)
+   Start at  20:32:01
+   Duration  2.66s (transform 97ms, setup 0ms, collect 580ms, tests 2.30s, environment 0ms, prepare 123ms)
+

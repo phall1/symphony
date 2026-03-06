@@ -536,3 +536,118 @@ server.stop()  // cleanup
 - ✓ Zero TypeScript errors in all 4 observability files
 - ✓ `bun run typecheck` exits 0 (no errors — pre-existing errors remain pre-existing)
 - ✓ Evidence saved to `.sisyphus/evidence/t10-typecheck.txt`
+
+## T15: Orchestrator Conformance Tests — COMPLETED
+
+### Implementation Notes
+- **File**: `typescript/src/orchestrator/orchestrator.test.ts` (660 lines, 28 tests)
+- **Coverage**: All 15 SPEC.md §17.4 bullets covered
+
+### §17.4 Bullet → Test Mapping
+| Bullet | Tests |
+|--------|-------|
+| 1. Dispatch sort order | 3 tests in `sortForDispatch` suite |
+| 2. Todo non-terminal blocker → not eligible | `isEligible` suite |
+| 3. Todo terminal blocker → eligible | `isEligible` suite |
+| 4. Active-state refresh updates snapshot | `updateRunningIssueSnapshot` suite (2 tests) |
+| 5. Non-active state → no workspace cleanup | `reconciliation` suite via `tick` |
+| 6. Terminal state → workspace cleanup | `reconciliation` suite via `tick` |
+| 7. Empty running map → no-op | `reconciliation` suite via `tick` |
+| 8. Normal exit → continuation retry attempt 1 | `handleWorkerExit` suite |
+| 9. Abnormal exit → exponential backoff | `handleWorkerExit` suite (2 tests) |
+| 10. Retry backoff cap | `retryDelay` suite |
+| 11. Retry entry shape | `setRetryEntry` suite (2 tests) |
+| 12. Stall detection | `stall detection` suite via `tick` |
+| 13. Slot exhaustion | `slot exhaustion` suite (3 tests) |
+| 14. Snapshot returns running/retry/tokens/rate limits | `buildSnapshot` suite (2 tests) |
+| 15. Backoff formula | `retryDelay` suite (3 formula tests) |
+
+### Critical Finding: DUMMY_FIBER Pattern
+- `interruptFiber` in dispatch.ts checks `"id" in fiber` to decide whether to call `Fiber.interrupt`
+- `DUMMY_FIBER = {} as unknown as Fiber.Fiber<void, unknown>` (no "id" field) → `interruptFiber` returns `Effect.void` immediately
+- If DUMMY_FIBER has an `id` field, `interruptFiber` calls `Fiber.interrupt` on the fake object → runtime crash: "Not a valid effect: self => body(self, ...arguments)"
+- **Fix**: Use `const DUMMY_FIBER = {} as unknown as Fiber.Fiber<void, unknown>` (empty object)
+
+### Mock Layer Pattern for tick tests
+```typescript
+const layers = makeMockLayers(config, obsRef, {
+  refreshedIssues: [issue],
+  onRemoveForIssue: (id) => { recordedId = id },
+})
+yield* Effect.provide(tick(stateRef), layers)
+```
+- All 6 OrchestratorDeps services must be provided even if most aren't called
+- `obsRef` can be the same Ref as `stateRef` for simplicity in tests
+- Layers defined with `Layer.mergeAll` from `Layer.succeed(ServiceClass, { ...impl })`
+
+### reconcileRunningIssues Early-Exit Observation
+- When `running.size === 0`, `reconcileRunningIssues` returns before calling `fetchIssueStatesByIds`
+- Verified via callback that tracks whether fetch was called
+
+### Verification
+- ✓ 28/28 tests pass
+- ✓ Zero LSP errors in test file
+- ✓ Pre-existing codex.test.ts failures (`Bun is not defined`) unaffected
+- ✓ Evidence saved to `.sisyphus/evidence/t15-orchestrator-tests.txt`
+
+## T18: OpenCode Engine Conformance Tests — COMPLETED
+
+### Implementation Notes
+- **File**: `typescript/src/engine/opencode/opencode.test.ts` (11 tests)
+- **Pattern**: `globalThis.fetch` mock (same as tracker tests) — no vi.stubGlobal needed
+- **Layer provision**: `Effect.provide(eff, makeOpenCodeAgentEngineLive())` in run helper
+
+### Test Structure
+- `setupMockFetch(handler)` — records all calls in `fetchCalls[]`, dispatches to handler
+- `setupRoutedFetch(sseEvents)` — URL-dispatched router for full turn tests (POST /session, POST /session/:id/message, GET /event, POST /permission/:id, POST /session/:id/abort)
+- `makeSseResponse(events)` — returns `new Response(ReadableStream)` with `data: {json}\n\n` chunks
+- `makeJsonResponse(data)` — returns `{ ok: true, status: 200, json(), text() }` Response mock
+
+### SSE Mock Pattern
+```typescript
+function makeSseResponse(events: object[]): Response {
+  const encoder = new TextEncoder()
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const event of events) {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
+      }
+      controller.close()
+    },
+  })
+  return new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } })
+}
+```
+
+### SSE Termination
+- `Stream.takeUntil` stops the agentEvents stream at first terminal event (`turn_completed` or `turn_failed`)
+- ReadableStream closes after all events → `reader.read()` returns `{done: true}` → `Stream.unfold` returns undefined
+- For non-terminal SSE events, must follow with a terminal event in the test SSE array
+
+### SSE SessionID Filter
+- Events with `sessionID: SESSION_ID` pass the filter (exact match)
+- Events with no `sessionID` also pass (undefined → included)
+- Use `sessionID: SESSION_ID` in test SSE events to be explicit
+
+### autoApprovePermission Uses postNoBody
+- `postNoBody` does NOT call `json()` or `text()` — just makes the request
+- Mock response only needs to resolve (not even need `ok: true` since errors are swallowed)
+- Permission ID extracted from `sseEvent.data.id` (first checked location)
+
+### Test Coverage (11 tests)
+1. ✓ Shared mode sends POST to server_url/session
+2. ✓ Session creation body has `{ title: workspace }`
+3. ✓ createSession returns sessionId + threadId from response
+4. ✓ x-opencode-directory header present on all requests
+5. ✓ runTurn sends POST /session/:id/message with parts/model/agent
+6. ✓ SSE session.status {type:idle} → turn_completed
+7. ✓ SSE session.error → turn_failed with error message
+8. ✓ SSE permission.asked → approval_auto_approved + POST /permission/:id
+9. ✓ SSE server.heartbeat → stall_heartbeat
+10. ✓ SSE message.part.updated → notification with content
+11. ✓ abort sends POST /session/:id/abort
+
+### Verification
+- ✓ 11/11 tests pass in `bun run test src/engine/opencode/`
+- ✓ Pre-existing codex.test.ts failures (Bun is not defined) unaffected
+- ✓ Evidence saved to `.sisyphus/evidence/t18-opencode-tests.txt`

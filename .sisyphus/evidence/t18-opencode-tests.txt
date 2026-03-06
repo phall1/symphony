@@ -1,0 +1,113 @@
+$ vitest run src/engine/opencode/
+
+ RUN  v3.2.4 /Users/phall/workspace/symphony/typescript
+
+stdout | src/engine/opencode/opencode.test.ts > OpenCode engine — shared mode > sends POST to server_url/session on createSession
+[20:30:37.786] INFO (#1): opencode shared server connected { url: [32m'http://localhost:9999'[39m }
+
+stdout | src/engine/opencode/opencode.test.ts > OpenCode engine — shared mode > sends POST to server_url/session on createSession
+[20:30:37.788] INFO (#1): opencode session created {
+  workspace: [32m'/tmp/opencode-test-workspace'[39m,
+  sessionId: [32m'sess-opencode-test'[39m
+}
+
+stdout | src/engine/opencode/opencode.test.ts > OpenCode engine — shared mode > session creation POSTs { title: workspace } to /session
+[20:30:37.789] INFO (#2): opencode shared server connected { url: [32m'http://localhost:9999'[39m }
+
+stdout | src/engine/opencode/opencode.test.ts > OpenCode engine — shared mode > session creation POSTs { title: workspace } to /session
+[20:30:37.790] INFO (#2): opencode session created {
+  workspace: [32m'/tmp/opencode-test-workspace'[39m,
+  sessionId: [32m'sess-opencode-test'[39m
+}
+
+stdout | src/engine/opencode/opencode.test.ts > OpenCode engine — shared mode > createSession returns sessionId and threadId from server response
+[20:30:37.790] INFO (#3): opencode shared server connected { url: [32m'http://localhost:9999'[39m }
+
+stdout | src/engine/opencode/opencode.test.ts > OpenCode engine — shared mode > createSession returns sessionId and threadId from server response
+[20:30:37.790] INFO (#3): opencode session created {
+  workspace: [32m'/tmp/opencode-test-workspace'[39m,
+  sessionId: [32m'sess-opencode-test'[39m
+}
+
+stdout | src/engine/opencode/opencode.test.ts > OpenCode engine — shared mode > sends x-opencode-directory header on all HTTP requests
+[20:30:37.791] INFO (#4): opencode shared server connected { url: [32m'http://localhost:9999'[39m }
+
+stdout | src/engine/opencode/opencode.test.ts > OpenCode engine — shared mode > sends x-opencode-directory header on all HTTP requests
+[20:30:37.791] INFO (#4): opencode session created {
+  workspace: [32m'/tmp/opencode-test-workspace'[39m,
+  sessionId: [32m'sess-opencode-test'[39m
+}
+
+stdout | src/engine/opencode/opencode.test.ts > OpenCode engine — shared mode > runTurn sends POST /session/:id/message with parts, model, agent
+[20:30:37.794] INFO (#5): opencode shared server connected { url: [32m'http://localhost:9999'[39m }
+
+stdout | src/engine/opencode/opencode.test.ts > OpenCode engine — shared mode > runTurn sends POST /session/:id/message with parts, model, agent
+[20:30:37.795] INFO (#5): opencode session created {
+  workspace: [32m'/tmp/opencode-test-workspace'[39m,
+  sessionId: [32m'sess-opencode-test'[39m
+}
+
+stdout | src/engine/opencode/opencode.test.ts > OpenCode engine — shared mode > SSE session.status { type: 'idle' } emits turn_completed
+[20:30:37.795] INFO (#6): opencode shared server connected { url: [32m'http://localhost:9999'[39m }
+
+stdout | src/engine/opencode/opencode.test.ts > OpenCode engine — shared mode > SSE session.status { type: 'idle' } emits turn_completed
+[20:30:37.796] INFO (#6): opencode session created {
+  workspace: [32m'/tmp/opencode-test-workspace'[39m,
+  sessionId: [32m'sess-opencode-test'[39m
+}
+
+stdout | src/engine/opencode/opencode.test.ts > OpenCode engine — shared mode > SSE session.error emits turn_failed with error message
+[20:30:37.796] INFO (#7): opencode shared server connected { url: [32m'http://localhost:9999'[39m }
+
+stdout | src/engine/opencode/opencode.test.ts > OpenCode engine — shared mode > SSE session.error emits turn_failed with error message
+[20:30:37.796] INFO (#7): opencode session created {
+  workspace: [32m'/tmp/opencode-test-workspace'[39m,
+  sessionId: [32m'sess-opencode-test'[39m
+}
+
+stdout | src/engine/opencode/opencode.test.ts > OpenCode engine — shared mode > SSE permission.asked emits approval_auto_approved and POSTs to /permission/:id
+[20:30:37.797] INFO (#8): opencode shared server connected { url: [32m'http://localhost:9999'[39m }
+
+stdout | src/engine/opencode/opencode.test.ts > OpenCode engine — shared mode > SSE permission.asked emits approval_auto_approved and POSTs to /permission/:id
+[20:30:37.797] INFO (#8): opencode session created {
+  workspace: [32m'/tmp/opencode-test-workspace'[39m,
+  sessionId: [32m'sess-opencode-test'[39m
+}
+
+stdout | src/engine/opencode/opencode.test.ts > OpenCode engine — shared mode > SSE server.heartbeat emits stall_heartbeat
+[20:30:37.798] INFO (#9): opencode shared server connected { url: [32m'http://localhost:9999'[39m }
+
+stdout | src/engine/opencode/opencode.test.ts > OpenCode engine — shared mode > SSE server.heartbeat emits stall_heartbeat
+[20:30:37.798] INFO (#9): opencode session created {
+  workspace: [32m'/tmp/opencode-test-workspace'[39m,
+  sessionId: [32m'sess-opencode-test'[39m
+}
+
+stdout | src/engine/opencode/opencode.test.ts > OpenCode engine — shared mode > SSE message.part.updated emits notification with content
+[20:30:37.798] INFO (#10): opencode shared server connected { url: [32m'http://localhost:9999'[39m }
+
+stdout | src/engine/opencode/opencode.test.ts > OpenCode engine — shared mode > SSE message.part.updated emits notification with content
+[20:30:37.798] INFO (#10): opencode session created {
+  workspace: [32m'/tmp/opencode-test-workspace'[39m,
+  sessionId: [32m'sess-opencode-test'[39m
+}
+
+stdout | src/engine/opencode/opencode.test.ts > OpenCode engine — shared mode > abort sends POST /session/:id/abort
+[20:30:37.799] INFO (#11): opencode shared server connected { url: [32m'http://localhost:9999'[39m }
+
+stdout | src/engine/opencode/opencode.test.ts > OpenCode engine — shared mode > abort sends POST /session/:id/abort
+[20:30:37.799] INFO (#11): opencode session created {
+  workspace: [32m'/tmp/opencode-test-workspace'[39m,
+  sessionId: [32m'sess-opencode-test'[39m
+}
+
+stdout | src/engine/opencode/opencode.test.ts > OpenCode engine — shared mode > abort sends POST /session/:id/abort
+[20:30:37.799] INFO (#11): opencode session aborted { sessionId: [32m'sess-opencode-test'[39m }
+
+ ✓ src/engine/opencode/opencode.test.ts (11 tests) 15ms
+
+ Test Files  1 passed (1)
+      Tests  11 passed (11)
+   Start at  20:30:37
+   Duration  414ms (transform 39ms, setup 0ms, collect 165ms, tests 15ms, environment 0ms, prepare 40ms)
+
