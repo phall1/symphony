@@ -1,0 +1,9 @@
+typecheck: bun run typecheck
+output: (none - clean)
+exit_code: 0
+date: 2026-03-06T01:17:49Z
+files_added:
+  - src/observability/logger.ts
+  - src/observability/snapshot.ts
+  - src/observability/http.ts
+  - src/observability/index.ts

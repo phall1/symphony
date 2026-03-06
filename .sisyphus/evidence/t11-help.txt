@@ -1,0 +1,12 @@
+Usage: symphony [workflow-path] [--port <n>]
+
+Options:
+  workflow-path  Path to WORKFLOW.md (default: ./WORKFLOW.md)
+  --port <n>     Enable HTTP observability server on port n
+  --help         Print this message and exit
+
+Examples:
+  symphony
+  symphony ./my-workflow.md
+  symphony ./my-workflow.md --port 3000
+EXIT_CODE: 0

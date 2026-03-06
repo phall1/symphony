@@ -1,0 +1,4 @@
+$ bun run src/cli/index.ts ./nonexistent.md
+Error: workflow file not found: /Users/phall/workspace/symphony/typescript/nonexistent.md
+error: script "symphony" exited with code 1
+EXIT_CODE: 1

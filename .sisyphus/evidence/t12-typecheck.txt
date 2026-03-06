@@ -1,0 +1,24 @@
+=== T12: AgentEngine Abstraction Hardening ===
+Date: Thu Mar  5 20:17:40 EST 2026
+
+--- bun run typecheck ---
+$ tsc --noEmit
+Exit: 0
+
+--- bun run test ---
+$ vitest run
+
+ RUN  v3.2.4 /Users/phall/workspace/symphony/typescript
+
+ ✓ src/engine/agent.test.ts (6 tests) 4ms
+ ✓ src/tracker/index.test.ts (8 tests) 5ms
+ ✓ src/prompt/index.test.ts (8 tests) 9ms
+[WorkspaceManager] after_run hook failed for /var/folders/24/pv8lrvpx06s3lbc6_g_0hq980000gn/T/symphony-test-DfHNg0, ignoring
+ ✓ src/config/index.test.ts (9 tests) 8ms
+ ✓ src/workspace/index.test.ts (11 tests) 56ms
+
+ Test Files  5 passed (5)
+      Tests  42 passed (42)
+   Start at  20:17:42
+   Duration  492ms (transform 127ms, setup 0ms, collect 1.02s, tests 81ms, environment 0ms, prepare 231ms)
+
