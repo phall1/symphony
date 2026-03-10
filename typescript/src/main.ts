@@ -6,7 +6,7 @@ import { PromptEngineLive } from "./prompt/index.js"
 import { makeCodexAgentEngineLive } from "./engine/codex/index.js"
 import { makeOpenCodeAgentEngineLive } from "./engine/opencode/index.js"
 import { OrchestratorLive } from "./orchestrator/index.js"
-import { makeObservabilityLive } from "./observability/index.js"
+import { ObservabilityLive, makeObservabilityLive } from "./observability/index.js"
 import { WorkflowStore } from "./services.js"
 
 export function main(workflowPath: string, port: number = 0): Effect.Effect<void> {
@@ -39,15 +39,11 @@ export function main(workflowPath: string, port: number = 0): Effect.Effect<void
   // OrchestratorLive requires all leaf deps; wire them explicitly
   const orchestratorLayer = OrchestratorLive.pipe(Layer.provide(depsLayer))
 
-  // Observability requires OrchestratorStateRef (provided by orchestratorLayer)
-  const observabilityLayer = Layer.unwrap(
-    Effect.gen(function* () {
-      const store = yield* WorkflowStore
-      const config = yield* store.getResolved()
-      const effectivePort = port > 0 ? port : (config.server?.port ?? 0)
-      return makeObservabilityLive(effectivePort).pipe(Layer.provide(orchestratorLayer))
-    })
-  ).pipe(Layer.provide(workflowStoreLayer))
+  const observabilityLayer =
+    (port > 0
+      ? makeObservabilityLive(port)
+      : ObservabilityLive
+    ).pipe(Layer.provide(Layer.merge(workflowStoreLayer, orchestratorLayer)))
 
   const MainLayer = Layer.mergeAll(
     depsLayer,

@@ -82,7 +82,7 @@ function removeWorkspace(
     yield* assertPathContainment(root, wsPath)
 
     if (hooks.before_remove) {
-      yield* Effect.catchCause(
+      yield* Effect.catch(
         runHookScript(hooks.before_remove, wsPath, hooks.timeout_ms),
         () => Effect.logWarning(`[WorkspaceManager] before_remove hook failed for ${identifier}, continuing`)
       )
@@ -121,10 +121,10 @@ function makeWorkspaceManagerService(config: ResolvedConfig): WorkspaceManager["
 
       const script = hook === "after_run" ? hooks.after_run : hooks.before_remove
       if (!script) return Effect.void
-      return Effect.catchCause(
+      return Effect.catch(
         runHookScript(script, wsPath, hooks.timeout_ms),
         () => Effect.logWarning(`[WorkspaceManager] ${hook} hook failed for ${wsPath}, ignoring`)
-      ) as Effect.Effect<void, WorkspaceError>
+      )
     },
   }
 }

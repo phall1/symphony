@@ -5,7 +5,10 @@ import type { CodexProtocol } from "./protocol.js"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type LinearHandler = (query: string, variables?: Record<string, unknown>) => Promise<unknown>
+export type LinearHandler = (
+  query: string,
+  variables?: Record<string, unknown>
+) => Effect.Effect<unknown, AgentSessionError>
 
 export interface StreamTurnOptions {
   autoApproveAll?: boolean
@@ -50,10 +53,10 @@ export const streamTurn = (
   > = Effect.gen(function* () {
     const line = yield* Queue.take(lineQueue).pipe(
       Effect.timeout(turnTimeoutMs),
-      Effect.catchCause(() =>
+      Effect.catchTag("TimeoutError", () =>
         Effect.fail(new AgentSessionError({
           message: "turn_timeout: no message within turn_timeout_ms",
-        })),
+        }))
       ),
     )
 
@@ -181,14 +184,13 @@ const mapProtocolMessage = (
           return { type: "other" as const, raw: { tool_call: "linear_graphql", error: "invalid_input" } }
         }
 
-        // Execute handler — wrap errors as defects so stream error channel stays AgentSessionError
         const handler = options.linearHandler
-        yield* Effect.catchCause(
+        yield* Effect.catch(
           Effect.gen(function* () {
-            const data = yield* Effect.promise(() => handler(query, variables))
+            const data = yield* handler(query, variables)
             if (id != null) yield* protocol.sendResponse(id, { success: true, data })
           }),
-          (_cause) =>
+          () =>
             id != null
               ? protocol.sendResponse(id, { success: false, error: "linear_graphql execution failed" })
               : Effect.void,

@@ -1,4 +1,4 @@
-import { Effect, Ref, Duration, Queue, Cause, Schedule } from "effect"
+import { Effect, Ref, Duration, Queue, Schedule } from "effect"
 import type { Issue, ResolvedConfig } from "../types.js"
 import {
   terminateRunningIssue,
@@ -57,7 +57,7 @@ export function tick(): Effect.Effect<void, never, OrchestratorDeps> {
       return
     }
 
-    const issues = yield* Effect.catchCause(
+    const issues = yield* Effect.catch(
       tracker.fetchCandidateIssues(),
       () =>
         Effect.gen(function* () {
@@ -119,7 +119,7 @@ function reconcileRunningIssues(): Effect.Effect<void, never, OrchestratorDeps |
     const runningIds = [...state.running.keys()]
     if (runningIds.length === 0) return
 
-    const refreshed = yield* Effect.catchCause(
+    const refreshed = yield* Effect.catch(
       tracker.fetchIssueStatesByIds(runningIds),
       () =>
         Effect.gen(function* () {
@@ -210,9 +210,9 @@ function terminateAndCleanup(
 
     if (cleanupWorkspace) {
       const workspaceManager = yield* WorkspaceManager
-      yield* Effect.catchCause(
+      yield* Effect.catch(
         workspaceManager.removeForIssue(entry.identifier),
-        (cause) => Effect.logDebug("workspace cleanup failed (best-effort)").pipe(Effect.annotateLogs("cause", Cause.pretty(cause)))
+        (error) => Effect.logDebug("workspace cleanup failed (best-effort)").pipe(Effect.annotateLogs("cause", error.message))
       )
     }
 
@@ -265,7 +265,7 @@ export function startupTerminalCleanup(): Effect.Effect<void, never, TrackerClie
     const tracker = yield* TrackerClient
     const workspaceManager = yield* WorkspaceManager
 
-    const issues = yield* Effect.catchCause(
+    const issues = yield* Effect.catch(
       tracker.fetchIssuesByStates(config.tracker.terminal_states),
       () =>
         Effect.gen(function* () {
@@ -276,9 +276,9 @@ export function startupTerminalCleanup(): Effect.Effect<void, never, TrackerClie
 
     for (const issue of issues) {
       if (issue.identifier) {
-        yield* Effect.catchCause(
+        yield* Effect.catch(
           workspaceManager.removeForIssue(issue.identifier),
-          (cause) => Effect.logDebug("startup workspace cleanup failed (best-effort)").pipe(Effect.annotateLogs("cause", Cause.pretty(cause)))
+          (error) => Effect.logDebug("startup workspace cleanup failed (best-effort)").pipe(Effect.annotateLogs("cause", error.message))
         )
       }
     }

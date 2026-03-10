@@ -57,16 +57,17 @@ export const launchCodexProcess = (
       onError: (err) => (err instanceof Error ? err : new Error(String(err))),
     })
 
-    yield* Effect.forkChild(
-      Stream.runForEach(stderrStream, (chunk) => {
-        const text = new TextDecoder().decode(chunk).trim()
-        if (text.length > 0) {
-          return Effect.logDebug("codex stderr").pipe(
-            Effect.annotateLogs("stderr", text.slice(0, 1000)),
-          )
-        }
-        return Effect.void
-      }).pipe(Effect.catchCause(() => Effect.void)),
+    yield* Stream.runForEach(stderrStream, (chunk) => {
+      const text = new TextDecoder().decode(chunk).trim()
+      if (text.length > 0) {
+        return Effect.logDebug("codex stderr").pipe(
+          Effect.annotateLogs("stderr", text.slice(0, 1000)),
+        )
+      }
+      return Effect.void
+    }).pipe(
+      Effect.catch(() => Effect.void),
+      Effect.forkChild,
     )
 
     yield* Effect.addFinalizer(() =>

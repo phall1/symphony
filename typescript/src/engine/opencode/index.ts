@@ -317,7 +317,7 @@ const autoApprovePermission = (
   workspacePath: string,
 ): Effect.Effect<void> =>
   postNoBody(baseUrl, `/permission/${permissionId}`, { reply: "approve" }, workspacePath).pipe(
-    Effect.catchCause((cause) => Effect.logDebug("permission auto-approve failed").pipe(Effect.annotateLogs("cause", Cause.pretty(cause)))),
+    Effect.catch((error) => Effect.logDebug("permission auto-approve failed").pipe(Effect.annotateLogs("cause", error.message))),
   )
 
 // ─── OpenCodeAgentEngine ──────────────────────────────────────────────────────
@@ -341,12 +341,10 @@ export const makeOpenCodeAgentEngineLive = (): Layer.Layer<AgentEngine> =>
           const scope = yield* Scope.make()
           connection = yield* spawnPerWorkspaceServer(workspacePath).pipe(
             Effect.provideService(Scope.Scope, scope),
-            Effect.catchCause((cause) =>
-              Effect.fail(new AgentEngineError({
-                message: "Failed to spawn opencode server",
-                cause,
-              })),
-            ),
+            Effect.mapError((cause) => new AgentEngineError({
+              message: "Failed to spawn opencode server",
+              cause,
+            })),
           )
           connection.__scope = scope
         }
@@ -446,7 +444,7 @@ export const makeOpenCodeAgentEngineLive = (): Layer.Layer<AgentEngine> =>
                 `/session/${sessionId}/abort`,
                 {},
                 workspacePath,
-              ).pipe(Effect.catchCause((cause) => Effect.logDebug("session abort request failed").pipe(Effect.annotateLogs("cause", Cause.pretty(cause)))))
+              ).pipe(Effect.catch((error) => Effect.logDebug("session abort request failed").pipe(Effect.annotateLogs("cause", error.message))))
               yield* Effect.logInfo("opencode session aborted").pipe(
                 Effect.annotateLogs("sessionId", sessionId),
               )

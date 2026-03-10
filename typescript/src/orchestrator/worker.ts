@@ -27,26 +27,26 @@ export function runWorker(
     )
 
     if (config.hooks.before_run) {
-      yield* Effect.catchCause(
+      yield* Effect.catch(
         workspaceManager.runHook("before_run", workspace.path),
-        (cause) =>
+        (error) =>
           Effect.gen(function* () {
             yield* Effect.logWarning(`before_run hook failed for ${issue.identifier}`)
-            return yield* Effect.failCause(cause)
+            return yield* Effect.fail(error)
           })
       )
     }
 
-    const session: AgentSession = yield* Effect.catchCause(
+    const session: AgentSession = yield* Effect.catch(
       agentEngine.createSession({
         workspace: workspace.path,
         cwd: workspace.path,
         config,
       }),
-      (cause) =>
+      (error) =>
         Effect.gen(function* () {
           yield* bestEffortAfterRun(workspace.path)
-          return yield* Effect.failCause(cause)
+          return yield* Effect.fail(error)
         })
     )
 
@@ -78,9 +78,9 @@ function bestEffortAfterRun(
 ): Effect.Effect<void, never, WorkspaceManager> {
   return Effect.gen(function* () {
     const workspaceManager = yield* WorkspaceManager
-    yield* Effect.catchCause(
+    yield* Effect.catch(
       workspaceManager.runHook("after_run", workspacePath),
-      (cause) => Effect.logDebug("after_run hook failed (best-effort)").pipe(Effect.annotateLogs("cause", Cause.pretty(cause)))
+      (error) => Effect.logDebug("after_run hook failed (best-effort)").pipe(Effect.annotateLogs("cause", error.message))
     )
   })
 }

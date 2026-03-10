@@ -1,5 +1,5 @@
 import { Effect, Layer } from "effect"
-import { OrchestratorStateRef } from "../services.js"
+import { OrchestratorStateRef, WorkflowStore } from "../services.js"
 import { LoggerLive } from "./logger.js"
 import { startHttpServer } from "./http.js"
 
@@ -19,3 +19,14 @@ export function makeObservabilityLive(port: number): Layer.Layer<never, never, O
 
   return Layer.merge(LoggerLive, httpLayer)
 }
+
+export const ObservabilityLive: Layer.Layer<never, never, WorkflowStore | OrchestratorStateRef> =
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore
+      const config = yield* Effect.orDie(store.getResolved())
+      const { ref, pollTrigger } = yield* OrchestratorStateRef
+      const port = config.server.port ?? 0
+      yield* startHttpServer(port, ref, pollTrigger, config.server.host)
+    })
+  ).pipe(Layer.provide(LoggerLive))

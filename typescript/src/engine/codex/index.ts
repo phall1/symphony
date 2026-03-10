@@ -60,10 +60,10 @@ const awaitResponse = (
       while (true) {
         const line = yield* Queue.take(lineQueue).pipe(
           Effect.timeout(readTimeoutMs),
-          Effect.catchCause(() =>
+          Effect.catchTag("TimeoutError", () =>
             Effect.fail(new AgentEngineError({
               message: "response_timeout: no response within read_timeout_ms",
-            })),
+            }))
           ),
         )
 
@@ -108,12 +108,10 @@ export const makeCodexAgentEngineLive = (): Layer.Layer<AgentEngine> =>
 
         const proc = yield* launchCodexProcess(cwd, codexConfig).pipe(
           Effect.provideService(Scope.Scope, scope),
-          Effect.catchCause((cause) =>
-            Effect.fail(new AgentEngineError({
-              message: "Failed to launch codex process",
-              cause,
-            })),
-          ),
+          Effect.mapError((cause) => new AgentEngineError({
+            message: "Failed to launch codex process",
+            cause,
+          })),
         )
 
         yield* Effect.logInfo("codex process launched").pipe(
@@ -124,10 +122,13 @@ export const makeCodexAgentEngineLive = (): Layer.Layer<AgentEngine> =>
         const lineQueue = yield* Queue.unbounded<string>()
         const requestIdRef = yield* Ref.make(1)
 
-        yield* Effect.forkChild(
-          Stream.runForEach(proc.lines, (line) => Queue.offer(lineQueue, line)).pipe(
-            Effect.catchCause((cause) => Effect.logDebug("line queue consumer exited").pipe(Effect.annotateLogs("cause", Cause.pretty(cause)))),
+        yield* Stream.runForEach(proc.lines, (line) => Queue.offer(lineQueue, line)).pipe(
+          Effect.catch((error) =>
+            Effect.logDebug("line queue consumer exited").pipe(
+              Effect.annotateLogs("cause", String(error)),
+            )
           ),
+          Effect.forkChild,
         )
 
         const protocol = makeProtocol(
@@ -139,14 +140,18 @@ export const makeCodexAgentEngineLive = (): Layer.Layer<AgentEngine> =>
 
         const linearHandler: LinearHandler | undefined =
           config.tracker.kind === "linear" && config.tracker.api_key
-            ? async (query: string, variables?: Record<string, unknown>): Promise<unknown> => {
-                return Effect.runPromise(graphqlRequest(
+            ? (query: string, variables?: Record<string, unknown>) =>
+                graphqlRequest(
                   config.tracker.endpoint,
                   config.tracker.api_key,
                   query,
                   variables ?? {},
-                ))
-              }
+                ).pipe(
+                  Effect.mapError((error) => new AgentSessionError({
+                    message: error.message,
+                    cause: error,
+                  })),
+                )
             : undefined
 
         const autoApproveAll = codexConfig.approval_policy === "never"

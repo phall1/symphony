@@ -192,7 +192,10 @@ export function graphqlRequest(
   }).pipe(
     Effect.timeout(REQUEST_TIMEOUT_MS),
     Effect.catchTag("TimeoutError", () =>
-      Effect.fail(new TrackerError({ code: "linear_api_request", message: `Request timed out after ${REQUEST_TIMEOUT_MS}ms` }))
+      Effect.fail(new TrackerError({
+        code: "linear_api_request",
+        message: `Request timed out after ${REQUEST_TIMEOUT_MS}ms`,
+      }))
     )
   )
 }
@@ -257,7 +260,7 @@ export function fetchViewerId(
 ): Effect.Effect<string | null> {
   return graphqlRequest(endpoint, apiKey, VIEWER_QUERY, {}).pipe(
     Effect.map((data) => ((data as Record<string, unknown>)["viewer"] as { id: string } | null)?.id ?? null),
-    Effect.catchCause(() => Effect.succeed(null))
+    Effect.catch(() => Effect.succeed(null))
   )
 }
 

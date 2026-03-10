@@ -224,7 +224,7 @@ function handleRetryTimer(
 
     if (!popResult) return
 
-    const candidates = yield* Effect.catchCause(
+    const candidates = yield* Effect.catch(
       tracker.fetchCandidateIssues(),
       () =>
         Effect.gen(function* () {
