@@ -1,0 +1,256 @@
+import { describe, it, expect, vi, beforeAll, afterAll } from "vitest"
+import { Effect, Queue, Stream } from "effect"
+import { launchCodexProcess, splitIntoLines } from "./process.js"
+import { streamTurn } from "./streaming.js"
+import type { CodexProtocol } from "./protocol.js"
+import type { AgentEngineError } from "../agent.js"
+import type { ResolvedConfig } from "../../types.js"
+
+const makeCodexConfig = (): ResolvedConfig["codex"] => ({
+  command: "codex app-server",
+  approval_policy: {
+    reject: { sandbox_approval: true, rules: true, mcp_elicitations: true },
+  },
+  thread_sandbox: "workspace-write",
+  turn_sandbox_policy: { type: "workspaceWrite", workspacePath: "/ws" },
+  read_timeout_ms: 5000,
+  turn_timeout_ms: 3600000,
+  stall_timeout_ms: 300000,
+})
+
+const makeSuccessProtocol = (): CodexProtocol => ({
+  sendRequest: (method) => {
+    if (method === "thread/start") return Effect.succeed({ thread: { id: "thread-abc" } })
+    if (method === "turn/start") return Effect.succeed({ turn: { id: "turn-xyz" } })
+    return Effect.succeed({})
+  },
+  sendNotification: () => Effect.void,
+  sendResponse: () => Effect.void,
+})
+
+const makeBunSpawnMock = (stdoutData: string, stderrData = "") =>
+  ({
+    pid: 42,
+    stdin: { write: vi.fn(), flush: vi.fn() },
+    stdout: new ReadableStream<Uint8Array>({
+      start(controller) {
+        if (stdoutData) controller.enqueue(new TextEncoder().encode(stdoutData))
+        controller.close()
+      },
+    }),
+    stderr: new ReadableStream<Uint8Array>({
+      start(controller) {
+        if (stderrData) controller.enqueue(new TextEncoder().encode(stderrData))
+        controller.close()
+      },
+    }),
+    exited: Promise.resolve(0),
+    kill: vi.fn(),
+  }) as unknown as ReturnType<typeof Bun.spawn>
+
+describe("§17.5 Codex engine conformance", () => {
+  beforeAll(() => {
+    if (typeof (globalThis as Record<string, unknown>)["Bun"] === "undefined") {
+      vi.stubGlobal("Bun", { spawn: vi.fn() })
+    }
+  })
+
+  afterAll(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("1. launch command uses workspace cwd and invokes bash -lc <codex.command>", async () => {
+    const spawnSpy = vi.spyOn(Bun, "spawn").mockReturnValueOnce(makeBunSpawnMock(""))
+
+    await Effect.runPromise(Effect.scoped(launchCodexProcess("/workspace/test-issue", makeCodexConfig())))
+
+    expect(spawnSpy).toHaveBeenCalledWith(
+      ["bash", "-lc", "codex app-server"],
+      expect.objectContaining({ cwd: "/workspace/test-issue" }),
+    )
+
+    spawnSpy.mockRestore()
+  })
+
+  it("7. turn_timeout_ms enforced: empty queue fails with turn_timeout AgentSessionError", async () => {
+    const queue = await Effect.runPromise(Queue.unbounded<string>())
+
+    const error = await Effect.runPromise(
+      Effect.flip(Stream.runDrain(streamTurn(queue, makeSuccessProtocol(), 50))),
+    )
+
+    expect(error._tag).toBe("AgentSessionError")
+    expect(error.message).toContain("turn_timeout")
+  })
+
+  it("8. partial JSON lines are buffered until newline before being emitted", async () => {
+    const enc = new TextEncoder()
+    const chunks: Uint8Array[] = [
+      enc.encode('{"method":"turn/'),
+      enc.encode('completed"}\n'),
+      enc.encode('{"method":"notification","msg":"hi"}\n'),
+    ]
+
+    const lines = await Effect.runPromise(
+      Stream.runCollect(splitIntoLines(Stream.fromIterable(chunks))),
+    )
+
+    expect(lines).toHaveLength(2)
+    expect(lines[0]).toBe('{"method":"turn/completed"}')
+    expect(lines[1]).toBe('{"method":"notification","msg":"hi"}')
+  })
+
+  it("9. stdout and stderr handled separately: only stdout lines reach the line queue", async () => {
+    const spawnSpy = vi.spyOn(Bun, "spawn").mockReturnValueOnce(
+      makeBunSpawnMock('{"method":"turn/completed"}\n', "Starting Codex... [debug info]\n"),
+    )
+
+    const lines = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const proc = yield* launchCodexProcess("/ws", makeCodexConfig())
+          return yield* Stream.runCollect(proc.lines)
+        }),
+      ),
+    )
+
+    expect(lines).toEqual(['{"method":"turn/completed"}'])
+    spawnSpy.mockRestore()
+  })
+
+  it("10. non-JSON stderr lines are logged but do not crash parsing", async () => {
+    const spawnSpy = vi.spyOn(Bun, "spawn").mockReturnValueOnce(
+      makeBunSpawnMock(
+        '{"method":"turn/completed"}\n',
+        "totally not json! @#$%\n[error] something went wrong\n",
+      ),
+    )
+
+    const lines = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const proc = yield* launchCodexProcess("/ws", makeCodexConfig())
+          return yield* Stream.runCollect(proc.lines)
+        }),
+      ),
+    )
+
+    expect(lines).toEqual(['{"method":"turn/completed"}'])
+    spawnSpy.mockRestore()
+  })
+
+  it("11. approval requests (all 4 spec variants) are auto-approved with approved:true", async () => {
+    const APPROVAL_METHODS = [
+      "item/approval/request",
+      "item/command/execute/approval",
+      "item/patch/approval",
+      "approval-request",
+    ]
+
+    for (const approvalMethod of APPROVAL_METHODS) {
+      const queue = await Effect.runPromise(Queue.unbounded<string>())
+      const responses: Array<{ id: unknown; result: unknown }> = []
+
+      const protocol: CodexProtocol = {
+        sendRequest: () => Effect.succeed({}),
+        sendNotification: () => Effect.void,
+        sendResponse: (id, result) => Effect.sync(() => responses.push({ id, result })),
+      }
+
+      await Effect.runPromise(
+        Queue.offer(queue, JSON.stringify({ id: "req-1", method: approvalMethod, params: {} })),
+      )
+      await Effect.runPromise(Queue.offer(queue, JSON.stringify({ method: "turn/completed" })))
+
+      const events = await Effect.runPromise(Stream.runCollect(streamTurn(queue, protocol, 5000)))
+
+      expect(
+        responses.some((r) => r.id === "req-1" && (r.result as Record<string, unknown>).approved === true),
+        `${approvalMethod} should send approved:true response`,
+      ).toBe(true)
+
+      expect(
+        events.some((e) => e.type === "approval_auto_approved"),
+        `${approvalMethod} should emit approval_auto_approved event`,
+      ).toBe(true)
+    }
+  })
+
+  it("12. unsupported item/tool/call rejected with success:false without stalling session", async () => {
+    const queue = await Effect.runPromise(Queue.unbounded<string>())
+    const responses: Array<{ id: unknown; result: unknown }> = []
+
+    const protocol: CodexProtocol = {
+      sendRequest: () => Effect.succeed({}),
+      sendNotification: () => Effect.void,
+      sendResponse: (id, result) => Effect.sync(() => responses.push({ id, result })),
+    }
+
+    await Effect.runPromise(
+      Queue.offer(
+        queue,
+        JSON.stringify({ id: "tool-1", method: "item/tool/call", params: { name: "unknown_tool" } }),
+      ),
+    )
+    await Effect.runPromise(Queue.offer(queue, JSON.stringify({ method: "turn/completed" })))
+
+    const events = await Effect.runPromise(Stream.runCollect(streamTurn(queue, protocol, 5000)))
+
+    expect(
+      responses.some(
+        (r) => r.id === "tool-1" && (r.result as Record<string, unknown>).success === false,
+      ),
+    ).toBe(true)
+
+    expect(events.some((e) => e.type === "turn_completed")).toBe(true)
+  })
+
+  it("13. user input requests hard-fail with turn_input_required AgentSessionError", async () => {
+    const queue = await Effect.runPromise(Queue.unbounded<string>())
+
+    await Effect.runPromise(
+      Queue.offer(
+        queue,
+        JSON.stringify({
+          method: "item/tool/requestUserInput",
+          params: { prompt: "Enter a value:" },
+        }),
+      ),
+    )
+
+    const error = await Effect.runPromise(
+      Effect.flip(Stream.runDrain(streamTurn(queue, makeSuccessProtocol(), 5000))),
+    )
+
+    expect(error._tag).toBe("AgentSessionError")
+    expect(error.message).toContain("turn_input_required")
+  })
+
+  it("14. token/rate-limit payloads extracted from nested payload shapes", async () => {
+    const queue = await Effect.runPromise(Queue.unbounded<string>())
+
+    await Effect.runPromise(
+      Queue.offer(
+        queue,
+        JSON.stringify({
+          method: "thread/tokenUsage/updated",
+          params: {
+            usage: {
+              inputTokens: 100,
+              outputTokens: 50,
+              totalTokens: 150,
+            },
+          },
+        }),
+      ),
+    )
+    await Effect.runPromise(Queue.offer(queue, JSON.stringify({ method: "turn/completed" })))
+
+    const events = await Effect.runPromise(
+      Stream.runCollect(streamTurn(queue, makeSuccessProtocol(), 5000)),
+    )
+
+    const tokenEvent = events.find((e) => e.type === "token_usage")
+    expect(tokenEvent).toMatchObject({ type: "token_usage", input: 100, output: 50, total: 150 })
+  })
+})

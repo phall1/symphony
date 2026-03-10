@@ -1,0 +1,26 @@
+{
+  "name": "symphony",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start": "bun run src/cli/index.ts",
+    "symphony": "bun run src/cli/index.ts",
+    "build": "bun build src/cli/index.ts --outfile dist/symphony --target bun",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "effect": "4.0.0-beta.27",
+    "@effect/platform-bun": "4.0.0-beta.27",
+    "liquidjs": "^10.0.0",
+    "yaml": "^2.0.0",
+    "chokidar": "^4.0.0",
+    "hono": "^4.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "@types/bun": "latest",
+    "vitest": "^3.0.0",
+    "@effect/vitest": "4.0.0-beta.27"
+  }
+}
