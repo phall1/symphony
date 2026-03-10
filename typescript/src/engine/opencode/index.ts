@@ -1,4 +1,6 @@
 import { Effect, Exit, Layer, Scope, Stream, Cause } from "effect"
+import { readFile, writeFile, rm } from "node:fs/promises"
+import { join } from "node:path"
 import { AgentEngine } from "../agent.js"
 import { AgentEngineError, AgentSessionError } from "../agent.js"
 import type { AgentSession } from "../agent.js"
@@ -96,8 +98,83 @@ const postNoBody = (
 
 // ─── Per-workspace Server Mode ────────────────────────────────────────────────
 
+const OPENCODE_SERVER_PID_FILE = ".symphony-opencode-serve.pid"
+
+const pidFilePathForWorkspace = (workspacePath: string): string =>
+  join(workspacePath, OPENCODE_SERVER_PID_FILE)
+
+const readTrackedPid = (workspacePath: string): Effect.Effect<number | null> =>
+  Effect.catch(
+    Effect.tryPromise({
+      try: async () => {
+        const raw = await readFile(pidFilePathForWorkspace(workspacePath), "utf8")
+        const pid = parseInt(raw.trim(), 10)
+        return Number.isInteger(pid) && pid > 0 ? pid : null
+      },
+      catch: (err) => err,
+    }),
+    () => Effect.succeed(null),
+  )
+
+const writeTrackedPid = (workspacePath: string, pid: number): Effect.Effect<void> =>
+  Effect.catch(
+    Effect.tryPromise({
+      try: () => writeFile(pidFilePathForWorkspace(workspacePath), `${pid}\n`, "utf8"),
+      catch: (err) => err,
+    }),
+    () => Effect.void,
+  )
+
+const removeTrackedPidFile = (workspacePath: string): Effect.Effect<void> =>
+  Effect.catch(
+    Effect.tryPromise({
+      try: () => rm(pidFilePathForWorkspace(workspacePath), { force: true }),
+      catch: (err) => err,
+    }),
+    () => Effect.void,
+  )
+
+const isOpencodeServeProcess = (pid: number): Effect.Effect<boolean> =>
+  Effect.sync(() => {
+    try {
+      process.kill(pid, 0)
+    } catch {
+      return false
+    }
+
+    const out = Bun.spawnSync(["ps", "-p", String(pid), "-o", "command="], {
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    const command = new TextDecoder().decode(out.stdout).trim()
+    return command.includes("opencode serve")
+  })
+
+const reapTrackedServerForWorkspace = (workspacePath: string): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    const trackedPid = yield* readTrackedPid(workspacePath)
+    if (!trackedPid) return
+
+    const isServe = yield* isOpencodeServeProcess(trackedPid)
+    if (isServe) {
+      yield* Effect.sync(() => {
+        try {
+          process.kill(trackedPid, "SIGTERM")
+        } catch {
+          return
+        }
+      })
+      yield* Effect.logInfo("reaped stale opencode per-workspace server").pipe(
+        Effect.annotateLogs("pid", String(trackedPid)),
+        Effect.annotateLogs("workspace", workspacePath),
+      )
+    }
+
+    yield* removeTrackedPidFile(workspacePath)
+  })
+
 /**
- * Spawns `opencode serve --port 0` and parses the ephemeral port from stdout.
+ * Spawns `opencode serve --port <n>` and parses the selected port from stdout.
  * Process killed via Effect.addFinalizer when scope closes.
  */
 const spawnPerWorkspaceServer = (
@@ -105,6 +182,8 @@ const spawnPerWorkspaceServer = (
   port: number,
 ): Effect.Effect<MutableConnection, AgentEngineError, Scope.Scope> =>
   Effect.gen(function* () {
+    yield* reapTrackedServerForWorkspace(workspacePath)
+
     const proc = Bun.spawn(["opencode", "serve", "--port", String(port)], {
       cwd: workspacePath,
       stdout: "pipe",
@@ -112,13 +191,18 @@ const spawnPerWorkspaceServer = (
       env: { ...process.env },
     })
 
+    yield* writeTrackedPid(workspacePath, proc.pid)
+
     yield* Effect.addFinalizer(() =>
-      Effect.sync(() => {
-        try {
-          proc.kill()
-        } catch {
-          // process may already be dead
-        }
+      Effect.gen(function* () {
+        yield* Effect.sync(() => {
+          try {
+            proc.kill()
+          } catch {
+            // process may already be dead
+          }
+        })
+        yield* removeTrackedPidFile(workspacePath)
       }),
     )
 

@@ -146,6 +146,16 @@ opencode --help >/dev/null
 
 If using shared mode, verify server URL is reachable.
 
+### Auto-reap behavior (per-workspace mode)
+
+In per-workspace mode, Symphony tracks each spawned OpenCode server PID in the workspace at:
+
+```text
+<workspace>/.symphony-opencode-serve.pid
+```
+
+Before launching a new per-workspace server, Symphony will attempt to terminate the previously tracked PID for that same workspace (if it is still an `opencode serve` process). This prevents stale orphaned servers from accumulating after interrupted runs.
+
 ### Type safety check
 
 ```bash
