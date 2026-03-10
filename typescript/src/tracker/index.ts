@@ -17,7 +17,7 @@ export function makeLinearTrackerClientLive(config: ResolvedConfig): Layer.Layer
     Effect.gen(function* () {
       let resolvedAssigneeId: string | null = null
       if (assignee === "me") {
-        resolvedAssigneeId = yield* Effect.promise(() => fetchViewerId(endpoint, api_key))
+        resolvedAssigneeId = yield* fetchViewerId(endpoint, api_key)
         if (resolvedAssigneeId) {
           yield* Effect.logInfo(`Resolved assignee "me" to viewer ID: ${resolvedAssigneeId}`)
         } else {

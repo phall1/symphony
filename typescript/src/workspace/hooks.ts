@@ -1,6 +1,6 @@
 import { Effect } from "effect"
 import { spawn } from "node:child_process"
-import type { WorkspaceError } from "../types.js"
+import { WorkspaceError } from "../types.js"
 
 export function runHookScript(
   script: string,
@@ -17,11 +17,10 @@ export function runHookScript(
     const timer = setTimeout(() => {
       timedOut = true
       proc.kill("SIGTERM")
-      resume(Effect.fail({
-        _tag: "WorkspaceError" as const,
-        code: "hook_timeout" as const,
+      resume(Effect.fail(new WorkspaceError({
+        code: "hook_timeout",
         message: `Hook timed out after ${timeoutMs}ms: ${script.slice(0, 100)}`,
-      }))
+      })))
     }, timeoutMs)
 
     proc.on("close", (code) => {
@@ -30,23 +29,21 @@ export function runHookScript(
       if (code === 0) {
         resume(Effect.void)
       } else {
-        resume(Effect.fail({
-          _tag: "WorkspaceError" as const,
-          code: "hook_failed" as const,
+        resume(Effect.fail(new WorkspaceError({
+          code: "hook_failed",
           message: `Hook exited with code ${code}: ${script.slice(0, 100)}`,
-        }))
+        })))
       }
     })
 
     proc.on("error", (error) => {
       clearTimeout(timer)
       if (timedOut) return
-      resume(Effect.fail({
-        _tag: "WorkspaceError" as const,
-        code: "hook_failed" as const,
+      resume(Effect.fail(new WorkspaceError({
+        code: "hook_failed",
         message: `Hook process error: ${error.message}`,
         cause: error,
-      }))
+      })))
     })
   })
 }

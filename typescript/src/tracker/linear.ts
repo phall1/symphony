@@ -1,5 +1,6 @@
 import { Effect } from "effect"
-import type { Issue, TrackerError, BlockerRef } from "../types.js"
+import type { Issue, BlockerRef } from "../types.js"
+import { TrackerError } from "../types.js"
 
 const PAGE_SIZE = 50
 const REQUEST_TIMEOUT_MS = 30000
@@ -142,47 +143,58 @@ function normalizeMinimalIssue(node: Record<string, unknown>): Issue {
 
 // ─── HTTP Client ──────────────────────────────────────────────────────────────
 
-export async function graphqlRequest(
+export function graphqlRequest(
   endpoint: string,
   apiKey: string,
   query: string,
   variables: Record<string, unknown>
-): Promise<unknown> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
-
-  try {
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({ query, variables }),
-      signal: controller.signal,
+): Effect.Effect<unknown, TrackerError> {
+  return Effect.gen(function* () {
+    const response = yield* Effect.tryPromise({
+      try: () =>
+        fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({ query, variables }),
+        }),
+      catch: (err) =>
+        new TrackerError({ code: "linear_api_request", message: `Linear API request failed: ${err instanceof Error ? err.message : String(err)}`, cause: err }),
     })
 
     if (!response.ok) {
-      throw { _tag: "TrackerError" as const, code: "linear_api_status" as const, message: `Linear API returned HTTP ${response.status}: ${response.statusText}` }
+      return yield* Effect.fail(
+        new TrackerError({ code: "linear_api_status", message: `Linear API returned HTTP ${response.status}: ${response.statusText}` })
+      )
     }
 
-    const json = await response.json() as Record<string, unknown>
+    const json = yield* Effect.tryPromise({
+      try: () => response.json() as Promise<Record<string, unknown>>,
+      catch: (err) =>
+        new TrackerError({ code: "linear_api_request", message: `Failed to parse JSON response: ${String(err)}`, cause: err }),
+    })
 
     if (json["errors"]) {
-      throw { _tag: "TrackerError" as const, code: "linear_graphql_errors" as const, message: `Linear GraphQL errors: ${JSON.stringify(json["errors"])}`, cause: json["errors"] }
+      return yield* Effect.fail(
+        new TrackerError({ code: "linear_graphql_errors", message: `Linear GraphQL errors: ${JSON.stringify(json["errors"])}`, cause: json["errors"] })
+      )
     }
 
     if (!json["data"]) {
-      throw { _tag: "TrackerError" as const, code: "linear_unknown_payload" as const, message: "Linear API returned no data field" }
+      return yield* Effect.fail(
+        new TrackerError({ code: "linear_unknown_payload", message: "Linear API returned no data field" })
+      )
     }
 
     return json["data"]
-  } catch (error) {
-    if (error !== null && typeof error === "object" && "_tag" in error) throw error
-    throw { _tag: "TrackerError" as const, code: "linear_api_request" as const, message: `Linear API request failed: ${error instanceof Error ? error.message : String(error)}`, cause: error }
-  } finally {
-    clearTimeout(timer)
-  }
+  }).pipe(
+    Effect.timeout(REQUEST_TIMEOUT_MS),
+    Effect.catchTag("TimeoutError", () =>
+      Effect.fail(new TrackerError({ code: "linear_api_request", message: `Request timed out after ${REQUEST_TIMEOUT_MS}ms` }))
+    )
+  )
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -193,37 +205,33 @@ export function fetchCandidateIssues(
   projectSlug: string,
   activeStates: ReadonlyArray<string>
 ): Effect.Effect<ReadonlyArray<Issue>, TrackerError> {
-  return Effect.tryPromise({
-    try: async () => {
-      const issues: Issue[] = []
-      let cursor: string | null = null
+  return Effect.gen(function* () {
+    const issues: Issue[] = []
+    let cursor: string | null = null
 
-      while (true) {
-        const data = await graphqlRequest(endpoint, apiKey, CANDIDATE_ISSUES_QUERY, {
-          projectSlug,
-          activeStates: [...activeStates],
-          first: PAGE_SIZE,
-          after: cursor,
-        }) as Record<string, unknown>
+    while (true) {
+      const data = (yield* graphqlRequest(endpoint, apiKey, CANDIDATE_ISSUES_QUERY, {
+        projectSlug,
+        activeStates: [...activeStates],
+        first: PAGE_SIZE,
+        after: cursor,
+      })) as Record<string, unknown>
 
-        const issuesData = data["issues"] as { nodes: Array<Record<string, unknown>>; pageInfo: { hasNextPage: boolean; endCursor: string | null } }
-        for (const node of issuesData.nodes) {
-          issues.push(normalizeIssue(node))
-        }
-
-        if (!issuesData.pageInfo.hasNextPage) break
-        if (!issuesData.pageInfo.endCursor) {
-          throw { _tag: "TrackerError", code: "linear_missing_end_cursor", message: "Linear API returned hasNextPage=true but no endCursor" }
-        }
-        cursor = issuesData.pageInfo.endCursor
+      const issuesData = data["issues"] as { nodes: Array<Record<string, unknown>>; pageInfo: { hasNextPage: boolean; endCursor: string | null } }
+      for (const node of issuesData.nodes) {
+        issues.push(normalizeIssue(node))
       }
 
-      return issues
-    },
-    catch: (error) => {
-      if (error !== null && typeof error === "object" && "_tag" in error) return error as TrackerError
-      return { _tag: "TrackerError" as const, code: "linear_api_request" as const, message: String(error), cause: error }
+      if (!issuesData.pageInfo.hasNextPage) break
+      if (!issuesData.pageInfo.endCursor) {
+        return yield* Effect.fail(
+          new TrackerError({ code: "linear_missing_end_cursor", message: "Linear API returned hasNextPage=true but no endCursor" })
+        )
+      }
+      cursor = issuesData.pageInfo.endCursor
     }
+
+    return issues
   })
 }
 
@@ -234,28 +242,23 @@ export function fetchIssueStatesByIds(
 ): Effect.Effect<ReadonlyArray<Issue>, TrackerError> {
   if (ids.length === 0) return Effect.succeed([])
 
-  return Effect.tryPromise({
-    try: async () => {
-      const data = await graphqlRequest(endpoint, apiKey, ISSUES_BY_IDS_QUERY, { ids: [...ids] }) as Record<string, unknown>
-      const issuesData = data["issues"] as { nodes: Array<Record<string, unknown>> }
-      return issuesData.nodes.map(normalizeMinimalIssue)
-    },
-    catch: (error) => {
-      if (error !== null && typeof error === "object" && "_tag" in error) return error as TrackerError
-      return { _tag: "TrackerError" as const, code: "linear_api_request" as const, message: String(error), cause: error }
-    }
+  return Effect.gen(function* () {
+    const data = (yield* graphqlRequest(endpoint, apiKey, ISSUES_BY_IDS_QUERY, { ids: [...ids] })) as Record<string, unknown>
+    const issuesData = data["issues"] as { nodes: Array<Record<string, unknown>> }
+    return issuesData.nodes.map(normalizeMinimalIssue)
   })
 }
 
-export async function fetchViewerId(endpoint: string, apiKey: string): Promise<string | null> {
-  const VIEWER_QUERY = `query SymphonyLinearViewer { viewer { id } }`
-  try {
-    const data = await graphqlRequest(endpoint, apiKey, VIEWER_QUERY, {}) as Record<string, unknown>
-    const viewer = data["viewer"] as { id: string } | null
-    return viewer?.id ?? null
-  } catch {
-    return null
-  }
+const VIEWER_QUERY = `query SymphonyLinearViewer { viewer { id } }`
+
+export function fetchViewerId(
+  endpoint: string,
+  apiKey: string
+): Effect.Effect<string | null> {
+  return graphqlRequest(endpoint, apiKey, VIEWER_QUERY, {}).pipe(
+    Effect.map((data) => ((data as Record<string, unknown>)["viewer"] as { id: string } | null)?.id ?? null),
+    Effect.catchCause(() => Effect.succeed(null))
+  )
 }
 
 export function fetchIssuesByStates(
@@ -266,36 +269,32 @@ export function fetchIssuesByStates(
 ): Effect.Effect<ReadonlyArray<Issue>, TrackerError> {
   if (states.length === 0) return Effect.succeed([])
 
-  return Effect.tryPromise({
-    try: async () => {
-      const issues: Issue[] = []
-      let cursor: string | null = null
+  return Effect.gen(function* () {
+    const issues: Issue[] = []
+    let cursor: string | null = null
 
-      while (true) {
-        const data = await graphqlRequest(endpoint, apiKey, ISSUES_BY_STATES_QUERY, {
-          projectSlug,
-          states: [...states],
-          first: PAGE_SIZE,
-          after: cursor,
-        }) as Record<string, unknown>
+    while (true) {
+      const data = (yield* graphqlRequest(endpoint, apiKey, ISSUES_BY_STATES_QUERY, {
+        projectSlug,
+        states: [...states],
+        first: PAGE_SIZE,
+        after: cursor,
+      })) as Record<string, unknown>
 
-        const issuesData = data["issues"] as { nodes: Array<Record<string, unknown>>; pageInfo: { hasNextPage: boolean; endCursor: string | null } }
-        for (const node of issuesData.nodes) {
-          issues.push(normalizeMinimalIssue(node))
-        }
-
-        if (!issuesData.pageInfo.hasNextPage) break
-        if (!issuesData.pageInfo.endCursor) {
-          throw { _tag: "TrackerError" as const, code: "linear_missing_end_cursor" as const, message: "Linear API returned hasNextPage=true but no endCursor in fetchIssuesByStates" }
-        }
-        cursor = issuesData.pageInfo.endCursor
+      const issuesData = data["issues"] as { nodes: Array<Record<string, unknown>>; pageInfo: { hasNextPage: boolean; endCursor: string | null } }
+      for (const node of issuesData.nodes) {
+        issues.push(normalizeMinimalIssue(node))
       }
 
-      return issues
-    },
-    catch: (error) => {
-      if (error !== null && typeof error === "object" && "_tag" in error) return error as TrackerError
-      return { _tag: "TrackerError" as const, code: "linear_api_request" as const, message: String(error), cause: error }
+      if (!issuesData.pageInfo.hasNextPage) break
+      if (!issuesData.pageInfo.endCursor) {
+        return yield* Effect.fail(
+          new TrackerError({ code: "linear_missing_end_cursor", message: "Linear API returned hasNextPage=true but no endCursor in fetchIssuesByStates" })
+        )
+      }
+      cursor = issuesData.pageInfo.endCursor
     }
+
+    return issues
   })
 }

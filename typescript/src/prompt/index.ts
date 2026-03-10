@@ -1,6 +1,7 @@
 import { Effect, Layer } from "effect"
 import { Liquid } from "liquidjs"
-import type { Issue, PromptError } from "../types.js"
+import type { Issue } from "../types.js"
+import { PromptError } from "../types.js"
 import { PromptEngine } from "../services.js"
 
 const FALLBACK_PROMPT = "You are working on an issue from Linear."
@@ -16,7 +17,7 @@ function makePromptError(
   message: string,
   cause?: unknown
 ): PromptError {
-  return { _tag: "PromptError", code, message, cause }
+  return new PromptError({ code, message, cause })
 }
 
 const render = (

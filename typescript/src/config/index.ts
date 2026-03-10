@@ -18,14 +18,17 @@ export function makeWorkflowStoreLive(workflowPath: string): Layer.Layer<Workflo
       const workflowRef = yield* Ref.make<WorkflowDefinition>(def)
       const resolvedRef = yield* Ref.make<ResolvedConfig>(resolved)
 
+      const services = yield* Effect.services()
+      const runEffect = Effect.runPromiseWith(services)
+
       const stopWatcher = yield* watchWorkflowFile(
         workflowPath,
         workflowRef,
         resolvedRef,
         (error: unknown) => {
-          process.stderr.write(
-            `[WorkflowStore] Invalid reload, keeping last-known-good: ${String(error)}\n`
-          )
+          runEffect(
+            Effect.logWarning(`[WorkflowStore] Invalid reload, keeping last-known-good: ${String(error)}`)
+          ).catch(() => {})
         }
       )
 

@@ -1,6 +1,9 @@
 // Symphony Domain Types
 // Based on SPEC.md §4 — Core Domain Model
 
+import { Data } from "effect"
+import type { Fiber } from "effect"
+
 // ─── Issue ────────────────────────────────────────────────────────────────────
 
 export interface BlockerRef {
@@ -227,19 +230,19 @@ export interface RunningEntry {
   readonly turn_count: number
   readonly retry_attempt: number | null
   readonly started_at: Date
-  readonly workspace_path: string | null
-  // Worker fiber handle — typed as unknown to avoid circular deps; cast at use site
-  readonly worker_fiber: unknown
+   readonly workspace_path: string | null
+   // Worker fiber handle
+   readonly worker_fiber: Fiber.Fiber<void, unknown> | null
 }
 
 export interface RetryEntry {
   readonly issue_id: string
   readonly identifier: string
   readonly attempt: number
-  readonly due_at_ms: number
-  readonly error: string | null
-  // Timer handle — typed as unknown; implementation-specific
-  readonly timer_handle: unknown
+   readonly due_at_ms: number
+   readonly error: string | null
+   // Timer handle
+   readonly timer_handle: Fiber.Fiber<void, never> | null
 }
 
 export interface OrchestratorState {
@@ -262,12 +265,11 @@ export type WorkflowErrorCode =
   | "template_parse_error"
   | "template_render_error"
 
-export interface WorkflowError {
-  readonly _tag: "WorkflowError"
+export class WorkflowError extends Data.TaggedError("WorkflowError")<{
   readonly code: WorkflowErrorCode
   readonly message: string
   readonly cause?: unknown
-}
+}> {}
 
 export type ConfigErrorCode =
   | "unsupported_tracker_kind"
@@ -276,11 +278,10 @@ export type ConfigErrorCode =
   | "missing_codex_command"
   | "invalid_config"
 
-export interface ConfigError {
-  readonly _tag: "ConfigError"
+export class ConfigError extends Data.TaggedError("ConfigError")<{
   readonly code: ConfigErrorCode
   readonly message: string
-}
+}> {}
 
 export type TrackerErrorCode =
   | "unsupported_tracker_kind"
@@ -292,12 +293,11 @@ export type TrackerErrorCode =
   | "linear_unknown_payload"
   | "linear_missing_end_cursor"
 
-export interface TrackerError {
-  readonly _tag: "TrackerError"
+export class TrackerError extends Data.TaggedError("TrackerError")<{
   readonly code: TrackerErrorCode
   readonly message: string
   readonly cause?: unknown
-}
+}> {}
 
 export type WorkspaceErrorCode =
   | "path_containment_violation"
@@ -306,12 +306,11 @@ export type WorkspaceErrorCode =
   | "hook_timeout"
   | "invalid_workspace_key"
 
-export interface WorkspaceError {
-  readonly _tag: "WorkspaceError"
+export class WorkspaceError extends Data.TaggedError("WorkspaceError")<{
   readonly code: WorkspaceErrorCode
   readonly message: string
   readonly cause?: unknown
-}
+}> {}
 
 export type AgentErrorCode =
   | "codex_not_found"
@@ -325,23 +324,21 @@ export type AgentErrorCode =
   | "turn_input_required"
   | "session_startup_failed"
 
-export interface AgentError {
-  readonly _tag: "AgentError"
+export class AgentError extends Data.TaggedError("AgentError")<{
   readonly code: AgentErrorCode
   readonly message: string
   readonly cause?: unknown
-}
+}> {}
 
 export type PromptErrorCode =
   | "template_parse_error"
   | "template_render_error"
 
-export interface PromptError {
-  readonly _tag: "PromptError"
+export class PromptError extends Data.TaggedError("PromptError")<{
   readonly code: PromptErrorCode
   readonly message: string
   readonly cause?: unknown
-}
+}> {}
 
 export type SymphonyError =
   | WorkflowError

@@ -1,6 +1,7 @@
-import { Effect, Exit, Layer, Queue, Ref, Scope, Stream } from "effect"
+import { Effect, Exit, Layer, Queue, Ref, Scope, Stream, Cause } from "effect"
 import { AgentEngine } from "../agent.js"
-import type { AgentSession, AgentEngineError, AgentSessionError } from "../agent.js"
+import { AgentEngineError, AgentSessionError } from "../agent.js"
+import type { AgentSession } from "../agent.js"
 import type { AgentEvent, ResolvedConfig } from "../../types.js"
 import { launchCodexProcess } from "./process.js"
 import type { CodexProcess } from "./process.js"
@@ -60,10 +61,9 @@ const awaitResponse = (
         const line = yield* Queue.take(lineQueue).pipe(
           Effect.timeout(readTimeoutMs),
           Effect.catchCause(() =>
-            Effect.fail<AgentEngineError>({
-              _tag: "AgentEngineError",
+            Effect.fail(new AgentEngineError({
               message: "response_timeout: no response within read_timeout_ms",
-            }),
+            })),
           ),
         )
 
@@ -71,11 +71,10 @@ const awaitResponse = (
           const parsed = JSON.parse(line) as Record<string, unknown>
           if (parsed["id"] === expectedId) {
             if (parsed["error"] != null) {
-              return yield* Effect.fail<AgentEngineError>({
-                _tag: "AgentEngineError",
+              return yield* Effect.fail(new AgentEngineError({
                 message: `response_error: ${JSON.stringify(parsed["error"])}`,
                 cause: parsed["error"],
-              })
+              }))
             }
             return parsed["result"] as Record<string, unknown>
           }
@@ -110,11 +109,10 @@ export const makeCodexAgentEngineLive = (): Layer.Layer<AgentEngine> =>
         const proc = yield* launchCodexProcess(cwd, codexConfig).pipe(
           Effect.provideService(Scope.Scope, scope),
           Effect.catchCause((cause) =>
-            Effect.fail<AgentEngineError>({
-              _tag: "AgentEngineError",
+            Effect.fail(new AgentEngineError({
               message: "Failed to launch codex process",
               cause,
-            }),
+            })),
           ),
         )
 
@@ -128,7 +126,7 @@ export const makeCodexAgentEngineLive = (): Layer.Layer<AgentEngine> =>
 
         yield* Effect.forkChild(
           Stream.runForEach(proc.lines, (line) => Queue.offer(lineQueue, line)).pipe(
-            Effect.catchCause(() => Effect.void),
+            Effect.catchCause((cause) => Effect.logDebug("line queue consumer exited").pipe(Effect.annotateLogs("cause", Cause.pretty(cause)))),
           ),
         )
 
@@ -142,12 +140,12 @@ export const makeCodexAgentEngineLive = (): Layer.Layer<AgentEngine> =>
         const linearHandler: LinearHandler | undefined =
           config.tracker.kind === "linear" && config.tracker.api_key
             ? async (query: string, variables?: Record<string, unknown>): Promise<unknown> => {
-                return graphqlRequest(
+                return Effect.runPromise(graphqlRequest(
                   config.tracker.endpoint,
                   config.tracker.api_key,
                   query,
                   variables ?? {},
-                )
+                ))
               }
             : undefined
 
@@ -220,8 +218,7 @@ export const makeCodexAgentEngineLive = (): Layer.Layer<AgentEngine> =>
 
                   return Stream.concat(sessionStarted, turnEvents)
                 }),
-                Effect.mapError((err): AgentSessionError => ({
-                  _tag: "AgentSessionError",
+                Effect.mapError((err) => new AgentSessionError({
                   message: err.message,
                   cause: err.cause,
                 })),
@@ -291,11 +288,10 @@ const performInitAndThread = (
 
     const threadPayload = threadResult["thread"] as Record<string, unknown> | undefined
     if (!threadPayload || typeof threadPayload["id"] !== "string") {
-      return yield* Effect.fail<AgentEngineError>({
-        _tag: "AgentEngineError",
+      return yield* Effect.fail(new AgentEngineError({
         message: "Invalid thread/start response: missing thread.id",
         cause: threadResult,
-      })
+      }))
     }
 
     return { threadId: threadPayload["id"] as string }

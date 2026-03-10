@@ -10,11 +10,14 @@ export function watchWorkflowFile(
   resolvedRef: Ref.Ref<ResolvedConfig>,
   onError: (error: unknown) => void
 ): Effect.Effect<() => void> {
-  return Effect.sync(() => {
+  return Effect.gen(function* () {
+    const services = yield* Effect.services()
+    const runEffect = Effect.runPromiseWith(services)
+
     const watcher = chokidar.watch(filePath, { persistent: false, ignoreInitial: true })
 
     watcher.on("change", () => {
-      Effect.runPromise(
+      runEffect(
         Effect.gen(function* () {
           const def = yield* loadWorkflowFile(filePath)
           const resolved = resolveConfig(def.config)

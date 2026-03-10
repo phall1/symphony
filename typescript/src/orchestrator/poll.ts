@@ -1,4 +1,4 @@
-import { Effect, Ref, Duration, Queue } from "effect"
+import { Effect, Ref, Duration, Queue, Cause } from "effect"
 import type { Issue, OrchestratorState, ResolvedConfig } from "../types.js"
 import {
   terminateRunningIssue,
@@ -229,7 +229,7 @@ function terminateAndCleanup(
       const workspaceManager = yield* WorkspaceManager
       yield* Effect.catchCause(
         workspaceManager.removeForIssue(entry.identifier),
-        () => Effect.void
+        (cause) => Effect.logDebug("workspace cleanup failed (best-effort)").pipe(Effect.annotateLogs("cause", Cause.pretty(cause)))
       )
     }
 
@@ -294,7 +294,7 @@ export function startupTerminalCleanup(
       if (issue.identifier) {
         yield* Effect.catchCause(
           workspaceManager.removeForIssue(issue.identifier),
-          () => Effect.void
+          (cause) => Effect.logDebug("startup workspace cleanup failed (best-effort)").pipe(Effect.annotateLogs("cause", Cause.pretty(cause)))
         )
       }
     }

@@ -1,7 +1,8 @@
 import { Effect } from "effect"
 import { readFile } from "node:fs/promises"
 import { parse as parseYaml } from "yaml"
-import type { WorkflowDefinition, WorkflowConfig, WorkflowError } from "../types.js"
+import type { WorkflowDefinition, WorkflowConfig } from "../types.js"
+import { WorkflowError } from "../types.js"
 
 export function parseWorkflowContent(content: string): WorkflowDefinition {
   if (!content.startsWith("---")) {
@@ -18,22 +19,18 @@ export function parseWorkflowContent(content: string): WorkflowDefinition {
   try {
     parsed = parseYaml(frontMatterStr)
   } catch (error) {
-    const e: WorkflowError = {
-      _tag: "WorkflowError",
+    throw new WorkflowError({
       code: "workflow_parse_error",
       message: `YAML parse error: ${error instanceof Error ? error.message : String(error)}`,
       cause: error,
-    }
-    throw e
+    })
   }
 
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    const e: WorkflowError = {
-      _tag: "WorkflowError",
+    throw new WorkflowError({
       code: "workflow_front_matter_not_a_map",
       message: "YAML front matter must be a plain object/map",
-    }
-    throw e
+    })
   }
 
   return { config: parsed as WorkflowConfig, prompt_template: promptBody }
@@ -46,27 +43,23 @@ export function loadWorkflowFile(filePath: string): Effect.Effect<WorkflowDefini
       return parseWorkflowContent(content)
     },
     catch: (error) => {
-      if (error !== null && typeof error === "object" && "_tag" in error) {
-        return error as WorkflowError
-      }
+      if (error instanceof WorkflowError) return error
       const isNotFound =
         error instanceof Error &&
         "code" in error &&
         (error as NodeJS.ErrnoException).code === "ENOENT"
       if (isNotFound) {
-        return {
-          _tag: "WorkflowError" as const,
-          code: "missing_workflow_file" as const,
+        return new WorkflowError({
+          code: "missing_workflow_file",
           message: `Workflow file not found: ${filePath}`,
           cause: error,
-        }
+        })
       }
-      return {
-        _tag: "WorkflowError" as const,
-        code: "workflow_parse_error" as const,
+      return new WorkflowError({
+        code: "workflow_parse_error",
         message: `Failed to read workflow file: ${error instanceof Error ? error.message : String(error)}`,
         cause: error,
-      }
+      })
     },
   })
 }

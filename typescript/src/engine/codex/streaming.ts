@@ -1,6 +1,6 @@
 import { Effect, Stream, Queue } from "effect"
 import type { AgentEvent, TokenUsage } from "../../types.js"
-import type { AgentSessionError } from "../agent.js"
+import { AgentSessionError } from "../agent.js"
 import type { CodexProtocol } from "./protocol.js"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -51,10 +51,9 @@ export const streamTurn = (
     const line = yield* Queue.take(lineQueue).pipe(
       Effect.timeout(turnTimeoutMs),
       Effect.catchCause(() =>
-        Effect.fail<AgentSessionError>({
-          _tag: "AgentSessionError",
+        Effect.fail(new AgentSessionError({
           message: "turn_timeout: no message within turn_timeout_ms",
-        }),
+        })),
       ),
     )
 
@@ -155,11 +154,10 @@ const mapProtocolMessage = (
           description: "auto-approved user input request (approval_policy: never)",
         }
       }
-      return yield* Effect.fail<AgentSessionError>({
-        _tag: "AgentSessionError",
+      return yield* Effect.fail(new AgentSessionError({
         message: "turn_input_required: agent requested user input",
         cause: payload,
-      })
+      }))
     }
 
     // Tool calls
@@ -218,11 +216,10 @@ const mapProtocolMessage = (
 
     // Check for input-required patterns in turn/* methods
     if (method.startsWith("turn/") && needsInput(method, payload)) {
-      return yield* Effect.fail<AgentSessionError>({
-        _tag: "AgentSessionError",
+      return yield* Effect.fail(new AgentSessionError({
         message: "turn_input_required: agent requested user input",
         cause: payload,
-      })
+      }))
     }
 
     // Default: notification

@@ -1,5 +1,5 @@
 import type { Effect, Stream } from "effect"
-import { ServiceMap } from "effect"
+import { Data, ServiceMap } from "effect"
 import type {
   AgentEvent,
   AgentError,
@@ -17,11 +17,10 @@ import type {
  * Callers should treat this as a retriable error — the workspace is still
  * valid but the agent process needs to be restarted.
  */
-export interface AgentEngineError {
-  readonly _tag: "AgentEngineError"
+export class AgentEngineError extends Data.TaggedError("AgentEngineError")<{
   readonly message: string
   readonly cause?: unknown
-}
+}> {}
 
 // ─── AgentSessionError ────────────────────────────────────────────────────────
 
@@ -34,11 +33,10 @@ export interface AgentEngineError {
  * A session that raises `AgentSessionError` should be considered dead —
  * call `dispose()` and do not attempt further turns on the same session.
  */
-export interface AgentSessionError {
-  readonly _tag: "AgentSessionError"
+export class AgentSessionError extends Data.TaggedError("AgentSessionError")<{
   readonly message: string
   readonly cause?: unknown
-}
+}> {}
 
 // ─── AgentSession ─────────────────────────────────────────────────────────────
 

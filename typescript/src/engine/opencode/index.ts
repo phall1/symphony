@@ -1,6 +1,7 @@
-import { Effect, Exit, Layer, Scope, Stream } from "effect"
+import { Effect, Exit, Layer, Scope, Stream, Cause } from "effect"
 import { AgentEngine } from "../agent.js"
-import type { AgentSession, AgentEngineError, AgentSessionError } from "../agent.js"
+import { AgentEngineError, AgentSessionError } from "../agent.js"
+import type { AgentSession } from "../agent.js"
 import type { AgentEvent } from "../../types.js"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -44,8 +45,7 @@ const jsonPost = (
           },
           body: JSON.stringify(body),
         }),
-      catch: (err): AgentEngineError => ({
-        _tag: "AgentEngineError",
+      catch: (err) => new AgentEngineError({
         message: `HTTP POST ${path} failed: ${String(err)}`,
         cause: err,
       }),
@@ -54,18 +54,16 @@ const jsonPost = (
     if (!resp.ok) {
       const text = yield* Effect.tryPromise({
         try: () => resp.text(),
-        catch: () => ({ _tag: "AgentEngineError" as const, message: "Failed to read error body" }),
+        catch: () => new AgentEngineError({ message: "Failed to read error body" }),
       })
-      return yield* Effect.fail<AgentEngineError>({
-        _tag: "AgentEngineError",
+      return yield* Effect.fail(new AgentEngineError({
         message: `HTTP POST ${path} returned ${resp.status}: ${text}`,
-      })
+      }))
     }
 
     return (yield* Effect.tryPromise({
       try: () => resp.json() as Promise<Record<string, unknown>>,
-      catch: (err): AgentEngineError => ({
-        _tag: "AgentEngineError",
+      catch: (err) => new AgentEngineError({
         message: `Failed to parse JSON from ${path}: ${String(err)}`,
         cause: err,
       }),
@@ -89,8 +87,7 @@ const postNoBody = (
           },
           body: JSON.stringify(body),
         }),
-      catch: (err): AgentEngineError => ({
-        _tag: "AgentEngineError",
+      catch: (err) => new AgentEngineError({
         message: `HTTP POST ${path} failed: ${String(err)}`,
         cause: err,
       }),
@@ -147,8 +144,7 @@ const spawnPerWorkspaceServer = (
         reader.releaseLock()
         throw new Error(`Could not parse port from opencode stdout within 30s. Output: ${accumulated.slice(0, 500)}`)
       },
-      catch: (err): AgentEngineError => ({
-        _tag: "AgentEngineError",
+      catch: (err) => new AgentEngineError({
         message: `Failed to spawn opencode server: ${String(err)}`,
         cause: err,
       }),
@@ -192,18 +188,16 @@ const subscribeSSE = (
               "x-opencode-directory": workspacePath,
             },
           }),
-        catch: (err): AgentSessionError => ({
-          _tag: "AgentSessionError",
+        catch: (err) => new AgentSessionError({
           message: `SSE connection failed: ${String(err)}`,
           cause: err,
         }),
       })
 
       if (!resp.ok || !resp.body) {
-        return yield* Effect.fail<AgentSessionError>({
-          _tag: "AgentSessionError",
+        return yield* Effect.fail(new AgentSessionError({
           message: `SSE connection returned ${resp.status}`,
-        })
+        }))
       }
 
       return parseSSEStream(resp.body, sessionId)
@@ -235,8 +229,7 @@ const parseSSEStream = (
 
           const result = yield* Effect.tryPromise({
             try: () => reader.read(),
-            catch: (err): AgentSessionError => ({
-              _tag: "AgentSessionError",
+            catch: (err) => new AgentSessionError({
               message: `SSE read error: ${String(err)}`,
               cause: err,
             }),
@@ -324,7 +317,7 @@ const autoApprovePermission = (
   workspacePath: string,
 ): Effect.Effect<void> =>
   postNoBody(baseUrl, `/permission/${permissionId}`, { reply: "approve" }, workspacePath).pipe(
-    Effect.catchCause(() => Effect.void),
+    Effect.catchCause((cause) => Effect.logDebug("permission auto-approve failed").pipe(Effect.annotateLogs("cause", Cause.pretty(cause)))),
   )
 
 // ─── OpenCodeAgentEngine ──────────────────────────────────────────────────────
@@ -349,11 +342,10 @@ export const makeOpenCodeAgentEngineLive = (): Layer.Layer<AgentEngine> =>
           connection = yield* spawnPerWorkspaceServer(workspacePath).pipe(
             Effect.provideService(Scope.Scope, scope),
             Effect.catchCause((cause) =>
-              Effect.fail<AgentEngineError>({
-                _tag: "AgentEngineError",
+              Effect.fail(new AgentEngineError({
                 message: "Failed to spawn opencode server",
                 cause,
-              }),
+              })),
             ),
           )
           connection.__scope = scope
@@ -370,11 +362,10 @@ export const makeOpenCodeAgentEngineLive = (): Layer.Layer<AgentEngine> =>
 
         const sessionId = sessionResp["id"] as string | undefined
         if (!sessionId) {
-          return yield* Effect.fail<AgentEngineError>({
-            _tag: "AgentEngineError",
+          return yield* Effect.fail(new AgentEngineError({
             message: "Invalid /session response: missing id",
             cause: sessionResp,
-          })
+          }))
         }
 
         yield* Effect.logInfo("opencode session created").pipe(
@@ -400,8 +391,7 @@ export const makeOpenCodeAgentEngineLive = (): Layer.Layer<AgentEngine> =>
                 },
                 workspacePath,
               ).pipe(
-                Effect.mapError((err): AgentSessionError => ({
-                  _tag: "AgentSessionError",
+                Effect.mapError((err) => new AgentSessionError({
                   message: err.message,
                   cause: err.cause,
                 })),
@@ -441,8 +431,7 @@ export const makeOpenCodeAgentEngineLive = (): Layer.Layer<AgentEngine> =>
 
             return Stream.unwrap(
               turnStream.pipe(
-                Effect.mapError((err): AgentSessionError => ({
-                  _tag: "AgentSessionError",
+                Effect.mapError((err) => new AgentSessionError({
                   message: typeof err === "object" && err !== null && "message" in err ? String(err.message) : String(err),
                   cause: err,
                 })),
@@ -457,7 +446,7 @@ export const makeOpenCodeAgentEngineLive = (): Layer.Layer<AgentEngine> =>
                 `/session/${sessionId}/abort`,
                 {},
                 workspacePath,
-              ).pipe(Effect.catchCause(() => Effect.void))
+              ).pipe(Effect.catchCause((cause) => Effect.logDebug("session abort request failed").pipe(Effect.annotateLogs("cause", Cause.pretty(cause)))))
               yield* Effect.logInfo("opencode session aborted").pipe(
                 Effect.annotateLogs("sessionId", sessionId),
               )

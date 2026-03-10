@@ -3,7 +3,8 @@ import { mkdir, realpath, rm } from "node:fs/promises"
 import { join, resolve, sep } from "node:path"
 import { runHookScript } from "./hooks.js"
 import { WorkspaceManager } from "../services.js"
-import type { Workspace, WorkspaceError, ResolvedConfig } from "../types.js"
+import type { Workspace, ResolvedConfig } from "../types.js"
+import { WorkspaceError } from "../types.js"
 
 export function sanitizeWorkspaceKey(identifier: string): string {
   return identifier.replace(/[^A-Za-z0-9._-]/g, "_")
@@ -23,16 +24,15 @@ export function assertPathContainment(root: string, wsPath: string): Effect.Effe
       try { resolvedWs = await realpath(wsPath) } catch { resolvedWs = resolve(wsPath) }
 
       if (!resolvedWs.startsWith(resolvedRoot + sep) && resolvedWs !== resolvedRoot) {
-        throw {
-          _tag: "WorkspaceError" as const,
-          code: "path_containment_violation" as const,
+        throw new WorkspaceError({
+          code: "path_containment_violation",
           message: `Workspace path "${resolvedWs}" is not contained within root "${resolvedRoot}"`,
-        }
+        })
       }
     },
     catch: (error) => {
-      if (error !== null && typeof error === "object" && "_tag" in error) return error as WorkspaceError
-      return { _tag: "WorkspaceError" as const, code: "path_containment_violation" as const, message: String(error) } satisfies WorkspaceError
+      if (error instanceof WorkspaceError) return error
+      return new WorkspaceError({ code: "path_containment_violation", message: String(error) })
     }
   })
 }
@@ -55,12 +55,11 @@ function createWorkspace(
         const result = await mkdir(wsPath, { recursive: true })
         created_now = result !== undefined
       },
-      catch: (error) => ({
-        _tag: "WorkspaceError" as const,
-        code: "workspace_creation_failed" as const,
+      catch: (error) => new WorkspaceError({
+        code: "workspace_creation_failed",
         message: `Failed to create workspace directory: ${error instanceof Error ? error.message : String(error)}`,
         cause: error,
-      } satisfies WorkspaceError)
+      })
     })
 
     if (created_now && hooks.after_create) {
@@ -85,9 +84,7 @@ function removeWorkspace(
     if (hooks.before_remove) {
       yield* Effect.catchCause(
         runHookScript(hooks.before_remove, wsPath, hooks.timeout_ms),
-        () => Effect.sync(() => {
-          process.stderr.write(`[WorkspaceManager] before_remove hook failed for ${identifier}, continuing\n`)
-        })
+        () => Effect.logWarning(`[WorkspaceManager] before_remove hook failed for ${identifier}, continuing`)
       )
     }
 
@@ -95,12 +92,11 @@ function removeWorkspace(
       try: async () => {
         await rm(wsPath, { recursive: true, force: true })
       },
-      catch: (error) => ({
-        _tag: "WorkspaceError" as const,
-        code: "workspace_creation_failed" as const,
+      catch: (error) => new WorkspaceError({
+        code: "workspace_creation_failed",
         message: `Failed to remove workspace: ${error instanceof Error ? error.message : String(error)}`,
         cause: error,
-      } satisfies WorkspaceError)
+      })
     })
   })
 }
@@ -127,9 +123,7 @@ export function makeWorkspaceManagerLive(config: ResolvedConfig): Layer.Layer<Wo
       if (!script) return Effect.void
       return Effect.catchCause(
         runHookScript(script, wsPath, hooks.timeout_ms),
-        () => Effect.sync(() => {
-          process.stderr.write(`[WorkspaceManager] ${hook} hook failed for ${wsPath}, ignoring\n`)
-        })
+        () => Effect.logWarning(`[WorkspaceManager] ${hook} hook failed for ${wsPath}, ignoring`)
       ) as Effect.Effect<void, WorkspaceError>
     },
   })

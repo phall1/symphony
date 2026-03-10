@@ -1,4 +1,4 @@
-import { Effect, Ref, Fiber, Duration } from "effect"
+import { Effect, Ref, Fiber, Duration, Cause } from "effect"
 import type { Issue, OrchestratorState, ResolvedConfig, RetryEntry } from "../types.js"
 import {
   normalizeState,
@@ -123,7 +123,7 @@ export function dispatchIssue(
     const workerEffect = runWorker(stateRef, issue, attempt, config)
 
     const fiber = yield* Effect.catchCause(
-      Effect.map(Effect.forkChild(workerEffect), (f): Fiber.Fiber<void, unknown> => f as Fiber.Fiber<void, unknown>),
+      Effect.forkChild(workerEffect),
       () =>
         Effect.gen(function* () {
           yield* Effect.logWarning(`Failed to spawn worker for ${issue.identifier}`)
@@ -132,7 +132,7 @@ export function dispatchIssue(
             identifier: issue.identifier,
             error: "failed to spawn agent",
           })
-          return null as unknown as Fiber.Fiber<void, unknown>
+          return null
         })
     )
 
@@ -268,12 +268,12 @@ function handleRetryTimer(
   })
 }
 
-export function interruptFiber(fiber: unknown): Effect.Effect<void> {
-  if (fiber && typeof fiber === "object" && "id" in fiber) {
-    return Effect.catchCause(
-      Fiber.interrupt(fiber as Fiber.Fiber<unknown, unknown>),
-      () => Effect.void
-    ) as Effect.Effect<void>
-  }
-  return Effect.void
+export function interruptFiber(
+  fiber: Fiber.Fiber<void, unknown> | Fiber.Fiber<void, never> | null
+): Effect.Effect<void> {
+  if (fiber === null || !("id" in (fiber as object))) return Effect.void
+  return Effect.catchCause(
+    Fiber.interrupt(fiber),
+    (cause) => Effect.logDebug("fiber interrupt failed").pipe(Effect.annotateLogs("cause", Cause.pretty(cause)))
+  ) as Effect.Effect<void>
 }

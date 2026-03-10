@@ -1,4 +1,4 @@
-import { Effect, Ref, Stream } from "effect"
+import { Effect, Ref, Stream, Cause } from "effect"
 import type { Issue, OrchestratorState, ResolvedConfig, AgentEvent, WorkspaceError } from "../types.js"
 import { updateRunningEntry, addTokenDelta, setRateLimits, isActiveState } from "./state.js"
 import { WorkspaceManager, TrackerClient, WorkflowStore, PromptEngine } from "../services.js"
@@ -60,17 +60,17 @@ export function runWorker(
       }))
     )
 
-    yield* Effect.catchCause(
-      turnsLoop(stateRef, issue, attempt, config, session, tracker, store, promptEngine),
-      (cause) =>
-        Effect.gen(function* () {
-          yield* Effect.catchCause(session.dispose(), () => Effect.void)
-          yield* bestEffortAfterRun(workspaceManager, workspace.path)
-          return yield* Effect.failCause(cause)
-        })
-    )
+     yield* Effect.catchCause(
+       turnsLoop(stateRef, issue, attempt, config, session, tracker, store, promptEngine),
+       (cause) =>
+         Effect.gen(function* () {
+           yield* Effect.catchCause(session.dispose(), (cause) => Effect.logDebug("session dispose failed (error path)").pipe(Effect.annotateLogs("cause", Cause.pretty(cause))))
+           yield* bestEffortAfterRun(workspaceManager, workspace.path)
+           return yield* Effect.failCause(cause)
+         })
+     )
 
-    yield* Effect.catchCause(session.dispose(), () => Effect.void)
+    yield* Effect.catchCause(session.dispose(), (cause) => Effect.logDebug("session dispose failed").pipe(Effect.annotateLogs("cause", Cause.pretty(cause))))
     yield* bestEffortAfterRun(workspaceManager, workspace.path)
   })
 }
@@ -83,7 +83,7 @@ function bestEffortAfterRun(
 ): Effect.Effect<void> {
   return Effect.catchCause(
     workspaceManager.runHook("after_run", workspacePath),
-    () => Effect.void
+    (cause) => Effect.logDebug("after_run hook failed (best-effort)").pipe(Effect.annotateLogs("cause", Cause.pretty(cause)))
   )
 }
 

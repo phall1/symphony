@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest"
 import { Effect, Layer, Stream } from "effect"
 import { AgentEngine } from "./agent.js"
-import type { AgentEngineError, AgentSession, AgentSessionError } from "./agent.js"
+import { AgentEngineError, AgentSessionError } from "./agent.js"
+import type { AgentSession } from "./agent.js"
 import type { AgentEvent, ResolvedConfig } from "../types.js"
 
 const mockSession: AgentSession = {
@@ -89,18 +90,16 @@ describe("AgentEngine contract", () => {
   })
 
   it("AgentEngineError has _tag: AgentEngineError", () => {
-    const error: AgentEngineError = {
-      _tag: "AgentEngineError",
+    const error = new AgentEngineError({
       message: "subprocess failed to start",
-    }
+    })
     expect(error._tag).toBe("AgentEngineError")
   })
 
   it("AgentSessionError has _tag: AgentSessionError", () => {
-    const error: AgentSessionError = {
-      _tag: "AgentSessionError",
+    const error = new AgentSessionError({
       message: "turn timed out",
-    }
+    })
     expect(error._tag).toBe("AgentSessionError")
   })
 })

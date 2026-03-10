@@ -40,7 +40,7 @@ import {
   OrchestratorStateRef,
   PromptEngine,
 } from "../services.js"
-import { AgentEngine } from "../engine/agent.js"
+import { AgentEngine, AgentEngineError } from "../engine/agent.js"
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -184,7 +184,7 @@ function makeMockLayers(
     }),
     Layer.succeed(AgentEngine, {
       createSession: (_input) =>
-        Effect.fail({ _tag: "AgentEngineError" as const, message: "mock" }),
+        Effect.fail(new AgentEngineError({ message: "mock" })),
     })
   )
 }

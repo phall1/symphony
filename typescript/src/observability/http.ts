@@ -5,11 +5,15 @@ import { buildSnapshot } from "./snapshot.js"
 
 // ─── Hono app factory ─────────────────────────────────────────────────────────
 
-function makeApp(stateRef: Ref.Ref<OrchestratorState>, pollTrigger: Queue.Queue<void>): Hono {
+function makeApp(
+  stateRef: Ref.Ref<OrchestratorState>,
+  pollTrigger: Queue.Queue<void>,
+  runEffect: <A, E>(effect: Effect.Effect<A, E>) => Promise<A>
+): Hono {
   const app = new Hono()
 
   app.get("/", async (c) => {
-    const state = await Effect.runPromise(Ref.get(stateRef))
+    const state = await runEffect(Ref.get(stateRef))
     const snap = buildSnapshot(state)
     const html = `<!DOCTYPE html>
 <html lang="en">
@@ -35,14 +39,14 @@ ${snap.retrying.map(r => `<tr><td>${r.issue_identifier}</td><td>${r.attempt}</td
   })
 
   app.get("/api/v1/state", async (c) => {
-    const state = await Effect.runPromise(Ref.get(stateRef))
+    const state = await runEffect(Ref.get(stateRef))
     const snapshot = buildSnapshot(state)
     return c.json(snapshot)
   })
 
   app.get("/api/v1/:identifier", async (c) => {
     const identifier = c.req.param("identifier")
-    const state = await Effect.runPromise(Ref.get(stateRef))
+    const state = await runEffect(Ref.get(stateRef))
 
     const runningEntry = Array.from(state.running.values()).find(
       (e) => e.identifier === identifier
@@ -104,7 +108,7 @@ ${snap.retrying.map(r => `<tr><td>${r.issue_identifier}</td><td>${r.attempt}</td
   })
 
   app.post("/api/v1/refresh", async (c) => {
-    await Effect.runPromise(Queue.offer(pollTrigger, void 0 as void))
+    await runEffect(Queue.offer(pollTrigger, void 0 as void))
     return c.json({ queued: true, coalesced: false, requested_at: new Date().toISOString(), operations: ["poll", "reconcile"] }, 202)
   })
 
@@ -126,7 +130,9 @@ export function startHttpServer(
   return Effect.gen(function* () {
     if (port <= 0) return
 
-    const app = makeApp(stateRef, pollTrigger)
+    const services = yield* Effect.services()
+    const runEffect = Effect.runPromiseWith(services)
+    const app = makeApp(stateRef, pollTrigger, runEffect)
 
     const server = Bun.serve({
       port,
