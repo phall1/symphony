@@ -26,9 +26,15 @@ hooks:
   before_remove: |
     cd elixir && mise exec -- mix workspace.before_remove
 agent:
+  engine: opencode
   max_concurrent_agents: 10
   max_turns: 20
+opencode:
+  mode: per-workspace
+  agent: build
+  model: anthropic/claude-sonnet-4-20250514
 codex:
+  # Optional fallback engine config. Used only when `agent.engine: codex`.
   command: codex --config shell_environment_policy.inherit=all --config model_reasoning_effort=xhigh --model gpt-5.3-codex app-server
   approval_policy: never
   thread_sandbox: workspace-write

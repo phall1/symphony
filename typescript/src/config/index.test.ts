@@ -211,6 +211,28 @@ describe("validateDispatchConfig", () => {
     const kindError = errors.find((e) => e.code === "unsupported_tracker_kind")
     expect(kindError).toBeDefined()
   })
+
+  it("fails fast when engine is opencode and opencode.agent is missing", () => {
+    const config = resolveConfig({
+      tracker: { kind: "linear", api_key: "my-key", project_slug: "my-project" },
+      agent: { engine: "opencode" },
+      opencode: { agent: "" },
+    })
+    const errors = validateDispatchConfig(config)
+    expect(
+      errors.some((e) => e.message.includes("opencode.agent is required when agent.engine is \"opencode\"")),
+    ).toBe(true)
+  })
+
+  it("accepts opencode engine when opencode.agent is set", () => {
+    const config = resolveConfig({
+      tracker: { kind: "linear", api_key: "my-key", project_slug: "my-project" },
+      agent: { engine: "opencode" },
+      opencode: { agent: "build" },
+    })
+    const errors = validateDispatchConfig(config)
+    expect(errors).toHaveLength(0)
+  })
 })
 
 describe("watchWorkflowFile", () => {

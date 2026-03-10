@@ -44,5 +44,14 @@ export function validateDispatchConfig(config: ResolvedConfig): ConfigError[] {
     }
   }
 
+  if (config.agent.engine === "opencode") {
+    if (!config.opencode.agent || config.opencode.agent.trim().length === 0) {
+      errors.push(new ConfigError({
+        code: "invalid_config",
+        message: "opencode.agent is required when agent.engine is \"opencode\"",
+      }))
+    }
+  }
+
   return errors
 }

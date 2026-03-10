@@ -102,9 +102,10 @@ const postNoBody = (
  */
 const spawnPerWorkspaceServer = (
   workspacePath: string,
+  port: number,
 ): Effect.Effect<MutableConnection, AgentEngineError, Scope.Scope> =>
   Effect.gen(function* () {
-    const proc = Bun.spawn(["opencode", "serve", "--port", "0"], {
+    const proc = Bun.spawn(["opencode", "serve", "--port", String(port)], {
       cwd: workspacePath,
       stdout: "pipe",
       stderr: "pipe",
@@ -122,7 +123,7 @@ const spawnPerWorkspaceServer = (
     )
 
     // Parse ephemeral port from stdout — regex matches "port 12345", "port: 12345", "localhost:12345"
-    const port = yield* Effect.tryPromise({
+    const selectedPort = yield* Effect.tryPromise({
       try: async () => {
         const reader = proc.stdout.getReader()
         let accumulated = ""
@@ -151,12 +152,12 @@ const spawnPerWorkspaceServer = (
     })
 
     yield* Effect.logInfo("opencode per-workspace server started").pipe(
-      Effect.annotateLogs("port", String(port)),
+      Effect.annotateLogs("port", String(selectedPort)),
       Effect.annotateLogs("workspace", workspacePath),
     )
 
     return {
-      baseUrl: `http://localhost:${port}`,
+      baseUrl: `http://localhost:${selectedPort}`,
       process: { kill: () => proc.kill() },
     }
   })
@@ -339,7 +340,12 @@ export function makeOpenCodeAgentEngineService(): AgentEngine["Service"] {
           )
         } else {
           const scope = yield* Scope.make()
-          connection = yield* spawnPerWorkspaceServer(workspacePath).pipe(
+          const requestedPort = ocConfig.port > 0 ? ocConfig.port : 0
+          yield* Effect.logDebug("opencode per-workspace server launch config").pipe(
+            Effect.annotateLogs("requested_port", String(requestedPort)),
+            Effect.annotateLogs("workspace", workspacePath),
+          )
+          connection = yield* spawnPerWorkspaceServer(workspacePath, requestedPort).pipe(
             Effect.provideService(Scope.Scope, scope),
             Effect.mapError((cause) => new AgentEngineError({
               message: "Failed to spawn opencode server",
@@ -378,6 +384,12 @@ export function makeOpenCodeAgentEngineService(): AgentEngine["Service"] {
           runTurn: (turnInput) => {
             const turnStream = Effect.gen(function* () {
               const started: AgentEvent = { type: "session_started", sessionId }
+
+              yield* Effect.logInfo("opencode turn start").pipe(
+                Effect.annotateLogs("sessionId", sessionId),
+                Effect.annotateLogs("agent", ocConfig.agent || "(unset)"),
+                Effect.annotateLogs("model", ocConfig.model || "(unset)"),
+              )
 
               yield* jsonPost(
                 baseUrl,
