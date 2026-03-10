@@ -3,6 +3,7 @@
 export interface ParsedArgs {
   workflowPath: string
   port: number | null
+  debug: boolean
 }
 
 export type ParseResult = ParsedArgs | null | "error"
@@ -13,12 +14,14 @@ export function printUsage(): void {
 Options:
   workflow-path  Path to WORKFLOW.md (default: ./WORKFLOW.md)
   --port <n>     Enable HTTP observability server on port n
+  --debug        Set LOG_LEVEL=debug for this process
   --help         Print this message and exit
 
 Examples:
   symphony
   symphony ./my-workflow.md
   symphony ./my-workflow.md --port 3000
+  symphony ./my-workflow.md --debug
 `)
 }
 
@@ -27,6 +30,7 @@ export function parseArgs(argv: string[]): ParseResult {
 
   let workflowPath = "./WORKFLOW.md"
   let port: number | null = null
+  let debug = false
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!
@@ -53,6 +57,11 @@ export function parseArgs(argv: string[]): ParseResult {
       continue
     }
 
+    if (arg === "--debug") {
+      debug = true
+      continue
+    }
+
     if (!arg.startsWith("--")) {
       workflowPath = arg
       continue
@@ -62,5 +71,5 @@ export function parseArgs(argv: string[]): ParseResult {
     return "error"
   }
 
-  return { workflowPath, port }
+  return { workflowPath, port, debug }
 }

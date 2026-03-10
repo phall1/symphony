@@ -33,7 +33,7 @@ const CANDIDATE_ISSUES_QUERY = `
         assignee {
           id
         }
-        inverseRelations(filter: { type: { eq: "blocks" } }) {
+        inverseRelations {
           nodes {
             relatedIssue {
               id
@@ -156,7 +156,7 @@ export function graphqlRequest(
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Authorization": `Bearer ${apiKey}`,
+            "Authorization": apiKey,
           },
           body: JSON.stringify({ query, variables }),
         }),
@@ -165,8 +165,18 @@ export function graphqlRequest(
     })
 
     if (!response.ok) {
+      const text = yield* Effect.tryPromise({
+        try: () => response.text(),
+        catch: () => new TrackerError({
+          code: "linear_api_status",
+          message: `Linear API returned HTTP ${response.status}: ${response.statusText}`,
+        }),
+      })
       return yield* Effect.fail(
-        new TrackerError({ code: "linear_api_status", message: `Linear API returned HTTP ${response.status}: ${response.statusText}` })
+        new TrackerError({
+          code: "linear_api_status",
+          message: `Linear API returned HTTP ${response.status}: ${response.statusText}${text ? ` — ${text}` : ""}`,
+        })
       )
     }
 

@@ -37,9 +37,11 @@ export function tick(): Effect.Effect<void, never, OrchestratorDeps> {
     const store = yield* WorkflowStore
     const tracker = yield* TrackerClient
 
-    const config = yield* Effect.catch(store.getResolved(), () =>
+    const config = yield* Effect.catch(store.getResolved(), (error) =>
       Effect.gen(function* () {
-        yield* Effect.logWarning("Failed to get resolved config, skipping tick")
+        yield* Effect.logWarning("Failed to get resolved config, skipping tick").pipe(
+          Effect.annotateLogs("cause", error.message)
+        )
         return null as ResolvedConfig | null
       })
     )
@@ -59,9 +61,11 @@ export function tick(): Effect.Effect<void, never, OrchestratorDeps> {
 
     const issues = yield* Effect.catch(
       tracker.fetchCandidateIssues(),
-      () =>
+      (error) =>
         Effect.gen(function* () {
-          yield* Effect.logWarning("Failed to fetch candidate issues, skipping dispatch")
+          yield* Effect.logWarning("Failed to fetch candidate issues, skipping dispatch").pipe(
+            Effect.annotateLogs("cause", error.message)
+          )
           return null as ReadonlyArray<Issue> | null
         })
     )
@@ -91,7 +95,10 @@ export function pollLoop(): Effect.Effect<void, never, OrchestratorDeps> {
       yield* tick()
       const intervalMs = yield* Effect.catch(
         store.getResolved().pipe(Effect.map((c) => c.polling.interval_ms)),
-        () => Effect.succeed(30000)
+        (error) => Effect.logDebug("Failed to read polling interval, using default").pipe(
+          Effect.annotateLogs("cause", error.message),
+          Effect.andThen(Effect.succeed(30000))
+        )
       )
       yield* Effect.race(
         Effect.sleep(Duration.millis(intervalMs)),
@@ -121,9 +128,11 @@ function reconcileRunningIssues(): Effect.Effect<void, never, OrchestratorDeps |
 
     const refreshed = yield* Effect.catch(
       tracker.fetchIssueStatesByIds(runningIds),
-      () =>
+      (error) =>
         Effect.gen(function* () {
-          yield* Effect.logDebug("Failed to refresh running issue states, keeping active workers")
+          yield* Effect.logDebug("Failed to refresh running issue states, keeping active workers").pipe(
+            Effect.annotateLogs("cause", error.message)
+          )
           return null as ReadonlyArray<Issue> | null
         })
     )
@@ -267,9 +276,11 @@ export function startupTerminalCleanup(): Effect.Effect<void, never, TrackerClie
 
     const issues = yield* Effect.catch(
       tracker.fetchIssuesByStates(config.tracker.terminal_states),
-      () =>
+      (error) =>
         Effect.gen(function* () {
-          yield* Effect.logWarning("Startup terminal cleanup: failed to fetch terminal issues, continuing")
+          yield* Effect.logWarning("Startup terminal cleanup: failed to fetch terminal issues, continuing").pipe(
+            Effect.annotateLogs("cause", error.message)
+          )
           return [] as ReadonlyArray<Issue>
         })
     )

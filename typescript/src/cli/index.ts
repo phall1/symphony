@@ -16,7 +16,11 @@ if (parsed === "error") {
   process.exit(1)
 }
 
-const { workflowPath, port } = parsed
+const { workflowPath, port, debug } = parsed
+
+if (debug) {
+  process.env["LOG_LEVEL"] = "debug"
+}
 
 const resolvedPath = resolve(workflowPath)
 if (!existsSync(resolvedPath)) {
