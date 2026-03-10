@@ -124,18 +124,21 @@ export function dispatchIssue(
 
     const workerEffect = runWorker(issue, attempt)
 
-    const fiber = yield* Effect.catchCause(
-      Effect.forkChild(workerEffect),
-      () =>
-        Effect.gen(function* () {
-          yield* Effect.logWarning(`Failed to spawn worker for ${issue.identifier}`)
-          const nextAttempt = typeof attempt === "number" ? attempt + 1 : 1
-          yield* scheduleRetry(issue.id, nextAttempt, {
-            identifier: issue.identifier,
-            error: "failed to spawn agent",
+    const fiber = yield* workerEffect.pipe(
+      Effect.forkChild,
+      Effect.catchCauseIf(
+        (cause) => !Cause.hasInterruptsOnly(cause),
+        () =>
+          Effect.gen(function* () {
+            yield* Effect.logWarning(`Failed to spawn worker for ${issue.identifier}`)
+            const nextAttempt = typeof attempt === "number" ? attempt + 1 : 1
+            yield* scheduleRetry(issue.id, nextAttempt, {
+              identifier: issue.identifier,
+              error: "failed to spawn agent",
+            })
+            return null
           })
-          return null
-        })
+      )
     )
 
     if (!fiber) return
@@ -275,8 +278,9 @@ export function interruptFiber(
   fiber: Fiber.Fiber<void, unknown> | Fiber.Fiber<void, never> | null
 ): Effect.Effect<void> {
   if (fiber === null || !("id" in (fiber as object))) return Effect.void
-  return Effect.catchCause(
+  return Effect.catchCauseIf(
     Fiber.interrupt(fiber),
+    (cause) => !Cause.hasInterruptsOnly(cause),
     (cause) => Effect.logDebug("fiber interrupt failed").pipe(Effect.annotateLogs("cause", Cause.pretty(cause)))
-  ) as Effect.Effect<void>
+  )
 }

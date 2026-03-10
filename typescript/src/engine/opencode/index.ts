@@ -322,8 +322,8 @@ const autoApprovePermission = (
 
 // ─── OpenCodeAgentEngine ──────────────────────────────────────────────────────
 
-export const makeOpenCodeAgentEngineLive = (): Layer.Layer<AgentEngine> =>
-  Layer.succeed(AgentEngine, {
+export function makeOpenCodeAgentEngineService(): AgentEngine["Service"] {
+  return {
     createSession: (input) =>
       Effect.gen(function* () {
         const { workspace, cwd, config } = input
@@ -464,4 +464,8 @@ export const makeOpenCodeAgentEngineLive = (): Layer.Layer<AgentEngine> =>
 
         return session
       }),
-  })
+  }
+}
+
+export const makeOpenCodeAgentEngineLive = (): Layer.Layer<AgentEngine> =>
+  Layer.succeed(AgentEngine, makeOpenCodeAgentEngineService())

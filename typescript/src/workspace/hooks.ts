@@ -13,8 +13,10 @@ export function runHookScript(
       stdio: ["ignore", "pipe", "pipe"],
     })
 
+    let done = false
     let timedOut = false
     const timer = setTimeout(() => {
+      done = true
       timedOut = true
       proc.kill("SIGTERM")
       resume(Effect.fail(new WorkspaceError({
@@ -25,7 +27,8 @@ export function runHookScript(
 
     proc.on("close", (code) => {
       clearTimeout(timer)
-      if (timedOut) return
+      if (timedOut || done) return
+      done = true
       if (code === 0) {
         resume(Effect.void)
       } else {
@@ -38,12 +41,24 @@ export function runHookScript(
 
     proc.on("error", (error) => {
       clearTimeout(timer)
-      if (timedOut) return
+      if (timedOut || done) return
+      done = true
       resume(Effect.fail(new WorkspaceError({
         code: "hook_failed",
         message: `Hook process error: ${error.message}`,
         cause: error,
       })))
+    })
+
+    return Effect.sync(() => {
+      clearTimeout(timer)
+      if (done) return
+      done = true
+      try {
+        proc.kill("SIGTERM")
+      } catch {
+        // process may have already exited
+      }
     })
   })
 }

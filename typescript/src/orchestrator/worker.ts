@@ -58,17 +58,25 @@ export function runWorker(
       }))
     )
 
-     yield* Effect.catchCause(
+     yield* Effect.catch(
        turnsLoop(issue, attempt, session),
-       (cause) =>
+       (error) =>
          Effect.gen(function* () {
-           yield* Effect.catchCause(session.dispose(), (cause) => Effect.logDebug("session dispose failed (error path)").pipe(Effect.annotateLogs("cause", Cause.pretty(cause))))
+           yield* Effect.catchCauseIf(
+             session.dispose(),
+             (cause) => !Cause.hasInterruptsOnly(cause),
+             (cause) => Effect.logDebug("session dispose failed (error path)").pipe(Effect.annotateLogs("cause", Cause.pretty(cause)))
+           )
            yield* bestEffortAfterRun(workspace.path)
-           return yield* Effect.failCause(cause)
+           return yield* Effect.fail(error)
          })
      )
 
-    yield* Effect.catchCause(session.dispose(), (cause) => Effect.logDebug("session dispose failed").pipe(Effect.annotateLogs("cause", Cause.pretty(cause))))
+    yield* Effect.catchCauseIf(
+      session.dispose(),
+      (cause) => !Cause.hasInterruptsOnly(cause),
+      (cause) => Effect.logDebug("session dispose failed").pipe(Effect.annotateLogs("cause", Cause.pretty(cause)))
+    )
     yield* bestEffortAfterRun(workspace.path)
   })
 }

@@ -37,7 +37,7 @@ export function tick(): Effect.Effect<void, never, OrchestratorDeps> {
     const store = yield* WorkflowStore
     const tracker = yield* TrackerClient
 
-    const config = yield* Effect.catchCause(store.getResolved(), () =>
+    const config = yield* Effect.catch(store.getResolved(), () =>
       Effect.gen(function* () {
         yield* Effect.logWarning("Failed to get resolved config, skipping tick")
         return null as ResolvedConfig | null
@@ -89,7 +89,7 @@ export function pollLoop(): Effect.Effect<void, never, OrchestratorDeps> {
 
     const cycle = Effect.gen(function* () {
       yield* tick()
-      const intervalMs = yield* Effect.catchCause(
+      const intervalMs = yield* Effect.catch(
         store.getResolved().pipe(Effect.map((c) => c.polling.interval_ms)),
         () => Effect.succeed(30000)
       )

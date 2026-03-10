@@ -97,8 +97,8 @@ const awaitResponse = (
 
 // ─── CodexAgentEngine ─────────────────────────────────────────────────────────
 
-export const makeCodexAgentEngineLive = (): Layer.Layer<AgentEngine> =>
-  Layer.succeed(AgentEngine, {
+export function makeCodexAgentEngineService(): AgentEngine["Service"] {
+  return {
     createSession: (input) =>
       Effect.gen(function* () {
         const { cwd, config } = input
@@ -246,7 +246,11 @@ export const makeCodexAgentEngineLive = (): Layer.Layer<AgentEngine> =>
 
         return session
       }),
-  })
+  }
+}
+
+export const makeCodexAgentEngineLive = (): Layer.Layer<AgentEngine> =>
+  Layer.succeed(AgentEngine, makeCodexAgentEngineService())
 
 /**
  * Perform initialize + initialized + thread/start (without turn/start).

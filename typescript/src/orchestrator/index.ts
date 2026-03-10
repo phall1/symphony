@@ -35,10 +35,9 @@ export const OrchestratorLive = Layer.effect(OrchestratorStateRef)(
     const pollTrigger = yield* Queue.unbounded<void>()
     const orchestratorStateRef = { ref: stateRef, pollTrigger }
 
-    yield* Effect.forkChild(
-      pollLoop().pipe(
-        Effect.provideService(OrchestratorStateRef, orchestratorStateRef)
-      )
+    yield* pollLoop().pipe(
+      Effect.provideService(OrchestratorStateRef, orchestratorStateRef),
+      Effect.forkChild,
     )
 
     yield* Effect.addFinalizer(() =>
