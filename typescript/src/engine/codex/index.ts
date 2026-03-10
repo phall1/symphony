@@ -5,7 +5,9 @@ import type { AgentEvent, ResolvedConfig } from "../../types.js"
 import { launchCodexProcess } from "./process.js"
 import type { CodexProcess } from "./process.js"
 import { streamTurn } from "./streaming.js"
+import type { LinearHandler } from "./streaming.js"
 import type { CodexProtocol } from "./protocol.js"
+import { graphqlRequest } from "../../tracker/linear.js"
 
 export type { CodexProtocol } from "./protocol.js"
 
@@ -137,11 +139,25 @@ export const makeCodexAgentEngineLive = (): Layer.Layer<AgentEngine> =>
           codexConfig.read_timeout_ms || 5000,
         )
 
-        // Perform initialize + initialized + thread/start (turn/start is per-turn)
+        const linearHandler: LinearHandler | undefined =
+          config.tracker.kind === "linear" && config.tracker.api_key
+            ? async (query: string, variables?: Record<string, unknown>): Promise<unknown> => {
+                return graphqlRequest(
+                  config.tracker.endpoint,
+                  config.tracker.api_key,
+                  query,
+                  variables ?? {},
+                )
+              }
+            : undefined
+
+        const autoApproveAll = codexConfig.approval_policy === "never"
+
         const initHandshake = yield* performInitAndThread(
           protocol,
           cwd,
           codexConfig,
+          !!linearHandler,
         )
 
         const threadId = initHandshake.threadId
@@ -196,6 +212,10 @@ export const makeCodexAgentEngineLive = (): Layer.Layer<AgentEngine> =>
                     lineQueue,
                     protocol,
                     codexConfig.turn_timeout_ms || 3600000,
+                    {
+                      autoApproveAll,
+                      ...(linearHandler ? { linearHandler } : {}),
+                    },
                   )
 
                   return Stream.concat(sessionStarted, turnEvents)
@@ -234,6 +254,7 @@ const performInitAndThread = (
   protocol: CodexProtocol,
   workspace: string,
   config: ResolvedConfig["codex"],
+  hasLinearTool: boolean,
 ): Effect.Effect<{ threadId: string }, AgentEngineError> =>
   Effect.gen(function* () {
     const approvalPolicy = config.approval_policy ?? {
@@ -243,7 +264,7 @@ const performInitAndThread = (
 
     yield* protocol.sendRequest("initialize", {
       clientInfo: { name: "symphony", version: "1.0" },
-      capabilities: {},
+      capabilities: hasLinearTool ? { dynamicTools: { enabled: true } } : {},
     })
 
     yield* protocol.sendNotification("initialized", {})
@@ -252,6 +273,20 @@ const performInitAndThread = (
       approvalPolicy,
       sandbox: threadSandbox,
       cwd: workspace,
+      ...(hasLinearTool ? {
+        dynamicTools: [{
+          name: "linear_graphql",
+          description: "Execute a raw GraphQL query or mutation against Linear using Symphony's configured tracker auth.",
+          parameters: {
+            type: "object",
+            properties: {
+              query: { type: "string", description: "GraphQL query or mutation document (exactly one operation)" },
+              variables: { type: "object", description: "Optional GraphQL variables object" },
+            },
+            required: ["query"],
+          },
+        }],
+      } : {}),
     })
 
     const threadPayload = threadResult["thread"] as Record<string, unknown> | undefined

@@ -1,5 +1,5 @@
 import { Effect, Ref, Stream } from "effect"
-import type { Issue, OrchestratorState, ResolvedConfig, AgentEvent } from "../types.js"
+import type { Issue, OrchestratorState, ResolvedConfig, AgentEvent, WorkspaceError } from "../types.js"
 import { updateRunningEntry, addTokenDelta, setRateLimits, isActiveState } from "./state.js"
 import { WorkspaceManager, TrackerClient, WorkflowStore, PromptEngine } from "../services.js"
 import { AgentEngine } from "../engine/agent.js"
@@ -25,12 +25,12 @@ export function runWorker(
     const workspace = yield* workspaceManager.createForIssue(issue.identifier)
 
     yield* Ref.update(stateRef, (s) =>
-      updateRunningEntry(s, issue.id, (e) => ({ ...e }))
+      updateRunningEntry(s, issue.id, (e) => ({ ...e, workspace_path: workspace.path }))
     )
 
     if (config.hooks.before_run) {
       yield* Effect.catchCause(
-        workspaceManager.runHook("after_run", workspace.path),
+        workspaceManager.runHook("before_run", workspace.path),
         (cause) =>
           Effect.gen(function* () {
             yield* Effect.logWarning(`before_run hook failed for ${issue.identifier}`)
@@ -77,7 +77,7 @@ export function runWorker(
 
 function bestEffortAfterRun(
   workspaceManager: {
-    runHook(hook: "after_run" | "before_remove", workspacePath: string): Effect.Effect<void, never>
+    runHook(hook: "after_run" | "before_remove", workspacePath: string): Effect.Effect<void, WorkspaceError>
   },
   workspacePath: string
 ): Effect.Effect<void> {
@@ -107,7 +107,7 @@ function turnsLoop(
       const isContinuation = turnNumber > 1
       const prompt = yield* promptEngine.render(
         isContinuation
-          ? "Continue working on the issue. Check the current state and proceed."
+          ? `Continuation guidance:\n\n- The previous Codex turn completed normally, but the Linear issue is still in an active state.\n- This is continuation turn #${turnNumber} of ${maxTurns} for the current agent run.\n- Resume from the current workspace state instead of restarting from scratch.\n- The original task instructions and prior turn context are already present in this thread, so do not restate them before acting.\n- Focus on the remaining ticket work and do not end the turn while the issue stays active unless you are truly blocked.`
           : workflow.prompt_template,
         currentIssue,
         attempt

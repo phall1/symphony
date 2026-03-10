@@ -1,4 +1,4 @@
-import { Effect, Layer, Ref } from "effect"
+import { Effect, Layer, Ref, Queue } from "effect"
 import { makeInitialState } from "./state.js"
 import { pollLoop, startupTerminalCleanup } from "./poll.js"
 import {
@@ -32,12 +32,13 @@ export const OrchestratorLive = Layer.effect(OrchestratorStateRef)(
       config.agent.max_concurrent_agents
     )
     const stateRef = yield* Ref.make(initialState)
-    const orchestratorStateRef = { ref: stateRef }
+    const pollTrigger = yield* Queue.unbounded<void>()
+    const orchestratorStateRef = { ref: stateRef, pollTrigger }
 
     // Provide OrchestratorStateRef to the poll loop INTERNALLY
     // so tick() can access it without creating a circular external dependency
     yield* Effect.forkChild(
-      pollLoop(stateRef, config.polling.interval_ms).pipe(
+      pollLoop(stateRef, pollTrigger).pipe(
         Effect.provideService(OrchestratorStateRef, orchestratorStateRef)
       )
     )

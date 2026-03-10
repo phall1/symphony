@@ -1,5 +1,5 @@
 import { Effect, Layer } from "effect"
-import { mkdir, rm } from "node:fs/promises"
+import { mkdir, realpath, rm } from "node:fs/promises"
 import { join, resolve, sep } from "node:path"
 import { runHookScript } from "./hooks.js"
 import { WorkspaceManager } from "../services.js"
@@ -14,18 +14,27 @@ export function workspacePath(root: string, identifier: string): string {
   return join(root, key)
 }
 
-/** SPEC.md §9.5 Invariant 2: workspace path must be contained within root */
 export function assertPathContainment(root: string, wsPath: string): Effect.Effect<void, WorkspaceError> {
-  const resolvedRoot = resolve(root)
-  const resolvedWs = resolve(wsPath)
-  if (!resolvedWs.startsWith(resolvedRoot + sep) && resolvedWs !== resolvedRoot) {
-    return Effect.fail({
-      _tag: "WorkspaceError" as const,
-      code: "path_containment_violation" as const,
-      message: `Workspace path "${resolvedWs}" is not contained within root "${resolvedRoot}"`,
-    })
-  }
-  return Effect.void
+  return Effect.tryPromise({
+    try: async () => {
+      let resolvedRoot: string
+      let resolvedWs: string
+      try { resolvedRoot = await realpath(root) } catch { resolvedRoot = resolve(root) }
+      try { resolvedWs = await realpath(wsPath) } catch { resolvedWs = resolve(wsPath) }
+
+      if (!resolvedWs.startsWith(resolvedRoot + sep) && resolvedWs !== resolvedRoot) {
+        throw {
+          _tag: "WorkspaceError" as const,
+          code: "path_containment_violation" as const,
+          message: `Workspace path "${resolvedWs}" is not contained within root "${resolvedRoot}"`,
+        }
+      }
+    },
+    catch: (error) => {
+      if (error !== null && typeof error === "object" && "_tag" in error) return error as WorkspaceError
+      return { _tag: "WorkspaceError" as const, code: "path_containment_violation" as const, message: String(error) } satisfies WorkspaceError
+    }
+  })
 }
 
 function createWorkspace(
@@ -107,7 +116,13 @@ export function makeWorkspaceManagerLive(config: ResolvedConfig): Layer.Layer<Wo
     removeForIssue: (identifier: string) =>
       removeWorkspace(root, identifier, hooks),
 
-    runHook: (hook: "after_run" | "before_remove", wsPath: string) => {
+    runHook: (hook: "before_run" | "after_run" | "before_remove", wsPath: string) => {
+      if (hook === "before_run") {
+        const script = hooks.before_run
+        if (!script) return Effect.void
+        return runHookScript(script, wsPath, hooks.timeout_ms)
+      }
+      
       const script = hook === "after_run" ? hooks.after_run : hooks.before_remove
       if (!script) return Effect.void
       return Effect.catchCause(
@@ -115,7 +130,7 @@ export function makeWorkspaceManagerLive(config: ResolvedConfig): Layer.Layer<Wo
         () => Effect.sync(() => {
           process.stderr.write(`[WorkspaceManager] ${hook} hook failed for ${wsPath}, ignoring\n`)
         })
-      )
+      ) as Effect.Effect<void, WorkspaceError>
     },
   })
 }

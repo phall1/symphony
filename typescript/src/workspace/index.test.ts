@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest"
 import { Effect, Result } from "effect"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp, rm, realpath } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import {
@@ -15,8 +15,9 @@ let tempDirs: string[] = []
 
 async function makeTempDir(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "symphony-test-"))
-  tempDirs.push(dir)
-  return dir
+  const resolvedDir = await realpath(dir)
+  tempDirs.push(resolvedDir)
+  return resolvedDir
 }
 
 afterEach(async () => {
@@ -66,14 +67,14 @@ describe("createWorkspace", () => {
   it("sets created_now=true for new directory", async () => {
     const root = await makeTempDir()
     const layer = makeWorkspaceManagerLive({
-      tracker: { kind: "linear", endpoint: "", api_key: "", project_slug: "", active_states: [], terminal_states: [] },
+      tracker: { kind: "linear", endpoint: "", api_key: "", project_slug: "", active_states: [], terminal_states: [], assignee: null },
       polling: { interval_ms: 30000 },
       workspace: { root },
       hooks: { after_create: null, before_run: null, after_run: null, before_remove: null, timeout_ms: 30000 },
       agent: { max_concurrent_agents: 1, max_turns: 10, max_retry_backoff_ms: 5000, max_concurrent_agents_by_state: {}, engine: "codex" },
       codex: { command: "codex", approval_policy: null, thread_sandbox: "", turn_sandbox_policy: null, turn_timeout_ms: 60000, read_timeout_ms: 30000, stall_timeout_ms: 30000 },
       opencode: { mode: "per-workspace", server_url: null, model: "gpt-4o", agent: "opencode", port: 3000 },
-      server: { port: null },
+      server: { port: null, host: "127.0.0.1" },
     })
 
     const { WorkspaceManager } = await import("../services.js")
@@ -93,14 +94,14 @@ describe("createWorkspace", () => {
   it("sets created_now=false for existing directory", async () => {
     const root = await makeTempDir()
     const layer = makeWorkspaceManagerLive({
-      tracker: { kind: "linear", endpoint: "", api_key: "", project_slug: "", active_states: [], terminal_states: [] },
+      tracker: { kind: "linear", endpoint: "", api_key: "", project_slug: "", active_states: [], terminal_states: [], assignee: null },
       polling: { interval_ms: 30000 },
       workspace: { root },
       hooks: { after_create: null, before_run: null, after_run: null, before_remove: null, timeout_ms: 30000 },
       agent: { max_concurrent_agents: 1, max_turns: 10, max_retry_backoff_ms: 5000, max_concurrent_agents_by_state: {}, engine: "codex" },
       codex: { command: "codex", approval_policy: null, thread_sandbox: "", turn_sandbox_policy: null, turn_timeout_ms: 60000, read_timeout_ms: 30000, stall_timeout_ms: 30000 },
       opencode: { mode: "per-workspace", server_url: null, model: "gpt-4o", agent: "opencode", port: 3000 },
-      server: { port: null },
+      server: { port: null, host: "127.0.0.1" },
     })
 
     const { WorkspaceManager } = await import("../services.js")
@@ -122,14 +123,14 @@ describe("hook execution", () => {
   it("after_create hook failure propagates as WorkspaceError", async () => {
     const root = await makeTempDir()
     const layer = makeWorkspaceManagerLive({
-      tracker: { kind: "linear", endpoint: "", api_key: "", project_slug: "", active_states: [], terminal_states: [] },
+      tracker: { kind: "linear", endpoint: "", api_key: "", project_slug: "", active_states: [], terminal_states: [], assignee: null },
       polling: { interval_ms: 30000 },
       workspace: { root },
       hooks: { after_create: "exit 1", before_run: null, after_run: null, before_remove: null, timeout_ms: 5000 },
       agent: { max_concurrent_agents: 1, max_turns: 10, max_retry_backoff_ms: 5000, max_concurrent_agents_by_state: {}, engine: "codex" },
       codex: { command: "codex", approval_policy: null, thread_sandbox: "", turn_sandbox_policy: null, turn_timeout_ms: 60000, read_timeout_ms: 30000, stall_timeout_ms: 30000 },
       opencode: { mode: "per-workspace", server_url: null, model: "gpt-4o", agent: "opencode", port: 3000 },
-      server: { port: null },
+      server: { port: null, host: "127.0.0.1" },
     })
 
     const { WorkspaceManager } = await import("../services.js")
@@ -153,14 +154,14 @@ describe("hook execution", () => {
   it("after_run hook failure does NOT propagate (best-effort)", async () => {
     const root = await makeTempDir()
     const layer = makeWorkspaceManagerLive({
-      tracker: { kind: "linear", endpoint: "", api_key: "", project_slug: "", active_states: [], terminal_states: [] },
+      tracker: { kind: "linear", endpoint: "", api_key: "", project_slug: "", active_states: [], terminal_states: [], assignee: null },
       polling: { interval_ms: 30000 },
       workspace: { root },
       hooks: { after_create: null, before_run: null, after_run: "exit 1", before_remove: null, timeout_ms: 5000 },
       agent: { max_concurrent_agents: 1, max_turns: 10, max_retry_backoff_ms: 5000, max_concurrent_agents_by_state: {}, engine: "codex" },
       codex: { command: "codex", approval_policy: null, thread_sandbox: "", turn_sandbox_policy: null, turn_timeout_ms: 60000, read_timeout_ms: 30000, stall_timeout_ms: 30000 },
       opencode: { mode: "per-workspace", server_url: null, model: "gpt-4o", agent: "opencode", port: 3000 },
-      server: { port: null },
+      server: { port: null, host: "127.0.0.1" },
     })
 
     const { WorkspaceManager } = await import("../services.js")
@@ -199,14 +200,14 @@ describe("hook execution", () => {
   it("before_remove hook failure does not propagate (§17.2 before_remove best-effort)", async () => {
     const root = await makeTempDir()
     const layer = makeWorkspaceManagerLive({
-      tracker: { kind: "linear", endpoint: "", api_key: "", project_slug: "", active_states: [], terminal_states: [] },
+      tracker: { kind: "linear", endpoint: "", api_key: "", project_slug: "", active_states: [], terminal_states: [], assignee: null },
       polling: { interval_ms: 30000 },
       workspace: { root },
       hooks: { after_create: null, before_run: null, after_run: null, before_remove: "exit 1", timeout_ms: 5000 },
       agent: { max_concurrent_agents: 1, max_turns: 10, max_retry_backoff_ms: 5000, max_concurrent_agents_by_state: {}, engine: "codex" },
       codex: { command: "codex", approval_policy: null, thread_sandbox: "", turn_sandbox_policy: null, turn_timeout_ms: 60000, read_timeout_ms: 30000, stall_timeout_ms: 30000 },
       opencode: { mode: "per-workspace", server_url: null, model: "gpt-4o", agent: "opencode", port: 3000 },
-      server: { port: null },
+      server: { port: null, host: "127.0.0.1" },
     })
 
     const { WorkspaceManager } = await import("../services.js")
@@ -249,14 +250,14 @@ describe("workspacePath", () => {
   it("workspace path uses sanitized identifier under root (§17.2 agent cwd)", async () => {
     const root = await makeTempDir()
     const layer = makeWorkspaceManagerLive({
-      tracker: { kind: "linear", endpoint: "", api_key: "", project_slug: "", active_states: [], terminal_states: [] },
+      tracker: { kind: "linear", endpoint: "", api_key: "", project_slug: "", active_states: [], terminal_states: [], assignee: null },
       polling: { interval_ms: 30000 },
       workspace: { root },
       hooks: { after_create: null, before_run: null, after_run: null, before_remove: null, timeout_ms: 30000 },
       agent: { max_concurrent_agents: 1, max_turns: 10, max_retry_backoff_ms: 5000, max_concurrent_agents_by_state: {}, engine: "codex" },
       codex: { command: "codex", approval_policy: null, thread_sandbox: "", turn_sandbox_policy: null, turn_timeout_ms: 60000, read_timeout_ms: 30000, stall_timeout_ms: 30000 },
       opencode: { mode: "per-workspace", server_url: null, model: "gpt-4o", agent: "opencode", port: 3000 },
-      server: { port: null },
+      server: { port: null, host: "127.0.0.1" },
     })
 
     const { WorkspaceManager } = await import("../services.js")

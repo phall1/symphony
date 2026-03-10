@@ -294,6 +294,7 @@ export function makeRunningEntry(
     turn_count: 0,
     retry_attempt: normalizeAttempt(attempt),
     started_at: new Date(),
+    workspace_path: null,
     worker_fiber: workerFiber,
   }
 }

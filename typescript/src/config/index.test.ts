@@ -114,7 +114,7 @@ describe("resolveConfig", () => {
     expect(config.agent.max_concurrent_agents).toBe(10)
     expect(config.agent.max_turns).toBe(20)
     expect(config.agent.max_retry_backoff_ms).toBe(300000)
-    expect(config.tracker.kind).toBe("linear")
+    expect(config.tracker.kind).toBe("")
     expect(config.tracker.active_states).toEqual(["Todo", "In Progress"])
     expect(config.tracker.terminal_states).toContain("Done")
     expect(config.hooks.timeout_ms).toBe(60000)

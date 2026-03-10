@@ -14,7 +14,6 @@ import type {
 
 const DEFAULTS = {
   tracker: {
-    kind: "linear",
     endpoint: "https://api.linear.app/graphql",
     active_states: ["Todo", "In Progress"],
     terminal_states: ["Done", "Cancelled", "Canceled", "Duplicate", "Closed"],
@@ -48,7 +47,7 @@ const DEFAULTS = {
 
 function resolveEnvVar(value: string | undefined): string | undefined {
   if (!value) return value
-  const match = /^\$([A-Z_][A-Z0-9_]*)$/.exec(value)
+  const match = /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(value)
   if (match) {
     const key = match[1] as string
     const envVal = process.env[key]
@@ -108,12 +107,13 @@ export function resolveConfig(config: WorkflowConfig): ResolvedConfig {
 
   return {
     tracker: {
-      kind: t.kind ?? DEFAULTS.tracker.kind,
+      kind: t.kind ?? "",
       endpoint: t.endpoint ?? DEFAULTS.tracker.endpoint,
       api_key: resolvedApiKey,
       project_slug: t.project_slug ?? "",
       active_states: parseStates(t.active_states, DEFAULTS.tracker.active_states),
       terminal_states: parseStates(t.terminal_states, DEFAULTS.tracker.terminal_states),
+      assignee: t.assignee?.trim() || null,
     },
     polling: {
       interval_ms: parsePositiveInt(p.interval_ms, DEFAULTS.polling.interval_ms),
@@ -153,6 +153,7 @@ export function resolveConfig(config: WorkflowConfig): ResolvedConfig {
     },
     server: {
       port: s.port ?? null,
+      host: s.host ?? "127.0.0.1",
     },
   }
 }

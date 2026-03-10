@@ -22,6 +22,7 @@ const baseIssue: Issue = {
   state: "In Progress",
   branch_name: null,
   url: null,
+  assignee_id: null,
   labels: [],
   blocked_by: [],
   created_at: null,
@@ -62,6 +63,7 @@ function makeRunningEntry(overrides: Partial<RunningEntry> = {}): RunningEntry {
     turn_count: 3,
     retry_attempt: null,
     started_at: new Date(),
+    workspace_path: null,
     worker_fiber: null,
     ...overrides,
   }
@@ -88,6 +90,7 @@ function makeValidConfig(): ResolvedConfig {
       project_slug: "my-project",
       active_states: ["In Progress"],
       terminal_states: ["Done"],
+      assignee: null,
     },
     polling: { interval_ms: 30_000 },
     workspace: { root: "/tmp/workspaces" },
@@ -101,15 +104,15 @@ function makeValidConfig(): ResolvedConfig {
     },
     codex: {
       command: "codex",
-      approval_policy: null,
-      thread_sandbox: "",
-      turn_sandbox_policy: null,
+      approval_policy: { reject: { sandbox_approval: true, rules: true, mcp_elicitations: true } },
+      thread_sandbox: "workspace-write",
+      turn_sandbox_policy: { type: "workspaceWrite" },
       turn_timeout_ms: 300_000,
       read_timeout_ms: 60_000,
       stall_timeout_ms: 120_000,
     },
     opencode: { mode: "per-workspace", server_url: null, model: "", agent: "", port: 0 },
-    server: { port: null },
+    server: { port: null, host: "127.0.0.1" },
   }
 }
 

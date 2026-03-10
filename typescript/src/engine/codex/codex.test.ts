@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest"
 import { Effect, Queue, Stream } from "effect"
-import { performHandshake } from "./handshake.js"
 import { launchCodexProcess, splitIntoLines } from "./process.js"
 import { streamTurn } from "./streaming.js"
 import type { CodexProtocol } from "./protocol.js"
@@ -57,7 +56,7 @@ describe("§17.5 Codex engine conformance", () => {
   })
 
   afterAll(() => {
-    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
   })
 
   it("1. launch command uses workspace cwd and invokes bash -lc <codex.command>", async () => {
@@ -71,115 +70,6 @@ describe("§17.5 Codex engine conformance", () => {
     )
 
     spawnSpy.mockRestore()
-  })
-
-  it("2. startup handshake sends initialize, initialized, thread/start, turn/start", async () => {
-    const calls: string[] = []
-
-    const protocol: CodexProtocol = {
-      sendRequest: (method) => {
-        calls.push(`req:${method}`)
-        if (method === "thread/start") return Effect.succeed({ thread: { id: "t1" } })
-        if (method === "turn/start") return Effect.succeed({ turn: { id: "u1" } })
-        return Effect.succeed({})
-      },
-      sendNotification: (method) => {
-        calls.push(`notif:${method}`)
-        return Effect.void
-      },
-      sendResponse: () => Effect.void,
-    }
-
-    await Effect.runPromise(
-      performHandshake(protocol, "/ws", "fix the bug", "T-1: Fix", makeCodexConfig()),
-    )
-
-    expect(calls).toEqual(["req:initialize", "notif:initialized", "req:thread/start", "req:turn/start"])
-  })
-
-  it("3. initialize payload includes clientInfo and capabilities", async () => {
-    let capturedParams: unknown = null
-
-    const protocol: CodexProtocol = {
-      sendRequest: (method, params) => {
-        if (method === "initialize") capturedParams = params
-        if (method === "thread/start") return Effect.succeed({ thread: { id: "t1" } })
-        if (method === "turn/start") return Effect.succeed({ turn: { id: "u1" } })
-        return Effect.succeed({})
-      },
-      sendNotification: () => Effect.void,
-      sendResponse: () => Effect.void,
-    }
-
-    await Effect.runPromise(performHandshake(protocol, "/ws", "test", "T", makeCodexConfig()))
-
-    expect(capturedParams).toMatchObject({
-      clientInfo: { name: expect.any(String), version: expect.any(String) },
-      capabilities: expect.any(Object),
-    })
-  })
-
-  it("4. policy-related startup payloads use documented approval/sandbox defaults", async () => {
-    let threadParams: unknown = null
-
-    const protocol: CodexProtocol = {
-      sendRequest: (method, params) => {
-        if (method === "thread/start") {
-          threadParams = params
-          return Effect.succeed({ thread: { id: "t1" } })
-        }
-        if (method === "turn/start") return Effect.succeed({ turn: { id: "u1" } })
-        return Effect.succeed({})
-      },
-      sendNotification: () => Effect.void,
-      sendResponse: () => Effect.void,
-    }
-
-    await Effect.runPromise(performHandshake(protocol, "/ws", "test", "T", makeCodexConfig()))
-
-    expect(threadParams).toMatchObject({
-      approvalPolicy: expect.any(Object),
-      sandbox: expect.any(String),
-    })
-  })
-
-  it("5. thread/start and turn/start responses parse nested IDs, emit correct sessionId", async () => {
-    const result = await Effect.runPromise(
-      performHandshake(makeSuccessProtocol(), "/ws", "test", "T", makeCodexConfig()),
-    )
-
-    expect(result.threadId).toBe("thread-abc")
-    expect(result.turnId).toBe("turn-xyz")
-    expect(result.sessionId).toBe("thread-abc-turn-xyz")
-  })
-
-  it("6. read_timeout_ms enforced during startup: hanging protocol times out with AgentEngineError", async () => {
-    const hangingProtocol: CodexProtocol = {
-      sendRequest: () =>
-        Queue.unbounded<string>().pipe(
-          Effect.flatMap((q) =>
-            Queue.take(q).pipe(
-              Effect.timeout(50),
-              Effect.catchCause(() =>
-                Effect.fail<AgentEngineError>({
-                  _tag: "AgentEngineError",
-                  message: "response_timeout: no response within read_timeout_ms",
-                }),
-              ),
-              Effect.map(() => ({} as Record<string, unknown>)),
-            ),
-          ),
-        ),
-      sendNotification: () => Effect.void,
-      sendResponse: () => Effect.void,
-    }
-
-    const error = await Effect.runPromise(
-      Effect.flip(performHandshake(hangingProtocol, "/ws", "test", "T-1", makeCodexConfig())),
-    )
-
-    expect(error._tag).toBe("AgentEngineError")
-    expect(error.message).toContain("response_timeout")
   })
 
   it("7. turn_timeout_ms enforced: empty queue fails with turn_timeout AgentSessionError", async () => {

@@ -13,6 +13,7 @@ const testIssue: Issue = {
   state: "In Progress",
   branch_name: "fix/auth",
   url: "https://linear.app/mt-123",
+  assignee_id: null,
   labels: ["bug", "auth"],
   blocked_by: [],
   created_at: new Date("2024-01-01"),

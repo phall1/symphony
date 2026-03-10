@@ -51,10 +51,16 @@ export function sortForDispatch(issues: ReadonlyArray<Issue>): ReadonlyArray<Iss
 
 // ─── Eligibility (SPEC.md §8.2) ──────────────────────────────────────────────
 
+export function isRoutableToWorker(issue: Issue, resolvedAssigneeId: string | null): boolean {
+  if (resolvedAssigneeId === null) return true
+  return issue.assignee_id === resolvedAssigneeId
+}
+
 export function isEligible(
   issue: Issue,
   state: OrchestratorState,
-  config: ResolvedConfig
+  config: ResolvedConfig,
+  resolvedAssigneeId: string | null = null
 ): boolean {
   if (!issue.id || !issue.identifier || !issue.title || !issue.state) return false
 
@@ -68,6 +74,7 @@ export function isEligible(
   if (availableGlobalSlots(state) <= 0) return false
   if (!stateSlotAvailable(issue, state, config)) return false
   if (isTodoBlockedByNonTerminal(issue, terminalStates)) return false
+  if (!isRoutableToWorker(issue, resolvedAssigneeId)) return false
 
   return true
 }
@@ -238,6 +245,20 @@ function handleRetryTimer(
         error: "no available orchestrator slots",
       })
       return
+    }
+
+    const normalizedIssueSate = normalizeState(issue.state)
+    const byState = config.agent.max_concurrent_agents_by_state
+    const perStateLimit = byState[normalizedIssueSate]
+    if (perStateLimit !== undefined) {
+      const used = runningCountForState(state.running, issue.state)
+      if (used >= perStateLimit) {
+        yield* scheduleRetry(stateRef, issueId, popResult.attempt + 1, config, {
+          identifier: issue.identifier,
+          error: "no available orchestrator slots (per-state limit)",
+        })
+        return
+      }
     }
 
     yield* dispatchIssue(stateRef, issue, popResult.attempt, config)

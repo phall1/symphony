@@ -1,4 +1,4 @@
-import { ServiceMap, Ref } from "effect"
+import { ServiceMap, Ref, Queue } from "effect"
 import type { Effect } from "effect"
 import type {
   WorkflowDefinition,
@@ -37,6 +37,7 @@ export class TrackerClient extends ServiceMap.Service<
     fetchIssuesByStates(
       states: ReadonlyArray<string>
     ): Effect.Effect<ReadonlyArray<Issue>, TrackerError>
+    readonly resolvedAssigneeId: string | null
   }
 >()(
   "TrackerClient"
@@ -52,9 +53,9 @@ export class WorkspaceManager extends ServiceMap.Service<
     ): Effect.Effect<Workspace, WorkspaceError>
     removeForIssue(identifier: string): Effect.Effect<void, WorkspaceError>
     runHook(
-      hook: "after_run" | "before_remove",
+      hook: "before_run" | "after_run" | "before_remove",
       workspacePath: string
-    ): Effect.Effect<void, never>
+    ): Effect.Effect<void, WorkspaceError>
   }
 >()(
   "WorkspaceManager"
@@ -81,6 +82,7 @@ export class OrchestratorStateRef extends ServiceMap.Service<
   OrchestratorStateRef,
   {
     readonly ref: Ref.Ref<OrchestratorState>
+    readonly pollTrigger: Queue.Queue<void>
   }
 >()(
   "OrchestratorStateRef"

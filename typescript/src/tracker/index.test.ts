@@ -50,7 +50,7 @@ function makeIssueNode(overrides: Record<string, unknown> = {}) {
     labels: { nodes: [{ name: "Bug" }, { name: "Frontend" }] },
     createdAt: "2024-01-01T00:00:00Z",
     updatedAt: "2024-01-02T00:00:00Z",
-    relations: { nodes: [] },
+    inverseRelations: { nodes: [] },
     ...overrides,
   }
 }
@@ -141,7 +141,7 @@ describe("fetchCandidateIssues", () => {
 
   it("normalizes blockers from relations.nodes[].relatedIssue", async () => {
     const nodeWithBlocker = makeIssueNode({
-      relations: {
+      inverseRelations: {
         nodes: [
           {
             relatedIssue: {
@@ -227,7 +227,7 @@ describe("fetchIssuesByStates", () => {
       return Promise.resolve({ ok: true, json: () => Promise.resolve({}) } as Response)
     }) as unknown as typeof globalThis.fetch)
 
-    const result = await Effect.runPromise(fetchIssuesByStates(ENDPOINT, API_KEY, []))
+    const result = await Effect.runPromise(fetchIssuesByStates(ENDPOINT, API_KEY, PROJECT_SLUG, []))
 
     expect(result).toEqual([])
     expect(fetchCalled).toBe(false)

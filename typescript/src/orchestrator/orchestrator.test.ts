@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect } from "vitest"
-import { Effect, Layer, Ref } from "effect"
+import { Effect, Layer, Ref, Queue } from "effect"
 import type { Fiber } from "effect"
 import type {
   Issue,
@@ -54,6 +54,7 @@ function makeIssue(overrides: Partial<Issue> = {}): Issue {
     state: "Todo",
     branch_name: null,
     url: null,
+    assignee_id: null,
     labels: [],
     blocked_by: [],
     created_at: new Date("2024-01-01"),
@@ -82,6 +83,7 @@ function makeConfig(
       project_slug: "TEST",
       active_states: ["Todo", "InProgress"],
       terminal_states: ["Done", "Cancelled"],
+      assignee: null,
       ...(overrides.tracker ?? {}),
     },
     polling: { interval_ms: 5000, ...(overrides.polling ?? {}) },
@@ -120,7 +122,7 @@ function makeConfig(
       port: 0,
       ...(overrides.opencode ?? {}),
     },
-    server: { port: null, ...(overrides.server ?? {}) },
+    server: { port: null, host: "127.0.0.1", ...(overrides.server ?? {}) },
   }
 }
 
@@ -159,6 +161,7 @@ function makeMockLayers(
         return Effect.succeed(opts.refreshedIssues ?? [])
       },
       fetchIssuesByStates: (_states) => Effect.succeed([]),
+      resolvedAssigneeId: null,
     }),
     Layer.succeed(WorkspaceManager, {
       createForIssue: (id) =>
@@ -173,7 +176,9 @@ function makeMockLayers(
       },
       runHook: (_hook, _path) => Effect.void,
     }),
-    Layer.succeed(OrchestratorStateRef, { ref: obsRef }),
+    Layer.effect(OrchestratorStateRef)(
+      Effect.map(Queue.unbounded<void>(), (q) => ({ ref: obsRef, pollTrigger: q }))
+    ),
     Layer.succeed(PromptEngine, {
       render: (_template, _issue, _attempt) => Effect.succeed("test prompt"),
     }),

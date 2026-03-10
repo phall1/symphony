@@ -18,6 +18,7 @@ export interface Issue {
   readonly state: string
   readonly branch_name: string | null
   readonly url: string | null
+  readonly assignee_id: string | null
   readonly labels: ReadonlyArray<string>
   readonly blocked_by: ReadonlyArray<BlockerRef>
   readonly created_at: Date | null
@@ -33,6 +34,7 @@ export interface TrackerConfig {
   readonly project_slug?: string
   readonly active_states?: ReadonlyArray<string>
   readonly terminal_states?: ReadonlyArray<string>
+  readonly assignee?: string
 }
 
 export interface PollingConfig {
@@ -79,6 +81,7 @@ export interface OpenCodeConfig {
 
 export interface ServerConfig {
   readonly port?: number
+  readonly host?: string
 }
 
 export interface WorkflowConfig {
@@ -108,6 +111,7 @@ export interface ResolvedConfig {
     readonly project_slug: string
     readonly active_states: ReadonlyArray<string>
     readonly terminal_states: ReadonlyArray<string>
+    readonly assignee: string | null
   }
   readonly polling: {
     readonly interval_ms: number
@@ -147,6 +151,7 @@ export interface ResolvedConfig {
   }
   readonly server: {
     readonly port: number | null
+    readonly host: string
   }
 }
 
@@ -222,6 +227,7 @@ export interface RunningEntry {
   readonly turn_count: number
   readonly retry_attempt: number | null
   readonly started_at: Date
+  readonly workspace_path: string | null
   // Worker fiber handle — typed as unknown to avoid circular deps; cast at use site
   readonly worker_fiber: unknown
 }

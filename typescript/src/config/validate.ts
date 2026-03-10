@@ -33,5 +33,19 @@ export function validateDispatchConfig(config: ResolvedConfig): ConfigError[] {
     })
   }
 
+  if (config.agent.engine === "codex") {
+    const ap = config.codex.approval_policy
+    if (ap === null || ap === undefined) {
+      errors.push({ _tag: "ConfigError", code: "invalid_config", message: "codex.approval_policy is required" })
+    }
+    if (!config.codex.thread_sandbox) {
+      errors.push({ _tag: "ConfigError", code: "invalid_config", message: "codex.thread_sandbox must be a non-empty string" })
+    }
+    const tsp = config.codex.turn_sandbox_policy
+    if (tsp === null || tsp === undefined) {
+      errors.push({ _tag: "ConfigError", code: "invalid_config", message: "codex.turn_sandbox_policy is required" })
+    }
+  }
+
   return errors
 }

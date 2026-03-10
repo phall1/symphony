@@ -1,4 +1,4 @@
-import { Effect, Ref, Duration, Schedule } from "effect"
+import { Effect, Ref, Duration, Queue } from "effect"
 import type { Issue, OrchestratorState, ResolvedConfig } from "../types.js"
 import {
   terminateRunningIssue,
@@ -15,6 +15,7 @@ import {
 import {
   sortForDispatch,
   isEligible,
+  isRoutableToWorker,
   dispatchIssue,
   scheduleRetry,
   interruptFiber,
@@ -49,7 +50,9 @@ export function tick(
       return
     }
 
-    yield* reconcileRunningIssues(stateRef, config, tracker)
+    const resolvedAssigneeId = tracker.resolvedAssigneeId
+
+    yield* reconcileRunningIssues(stateRef, config, tracker, resolvedAssigneeId)
 
     const validationErrors = validateDispatchConfig(config)
     if (validationErrors.length > 0) {
@@ -79,7 +82,7 @@ export function tick(
     for (const issue of sorted) {
       const state = yield* Ref.get(stateRef)
       if (availableGlobalSlots(state) <= 0) break
-      if (isEligible(issue, state, config)) {
+      if (isEligible(issue, state, config, resolvedAssigneeId)) {
         yield* dispatchIssue(stateRef, issue, null, config)
       }
     }
@@ -102,13 +105,22 @@ function notifyObservers(
 
 export function pollLoop(
   stateRef: Ref.Ref<OrchestratorState>,
-  pollIntervalMs: number
-): Effect.Effect<never, never, OrchestratorDeps> {
-  const oneTick = tick(stateRef)
-  return Effect.repeat(
-    oneTick,
-    Schedule.spaced(Duration.millis(pollIntervalMs))
-  ) as Effect.Effect<never, never, OrchestratorDeps>
+  pollTrigger: Queue.Queue<void>
+): Effect.Effect<never, never, OrchestratorDeps | WorkflowStore> {
+  return Effect.gen(function* () {
+    const store = yield* WorkflowStore
+    while (true) {
+      yield* tick(stateRef)
+      const intervalMs = yield* Effect.catchCause(
+        store.getResolved().pipe(Effect.map((c) => c.polling.interval_ms)),
+        () => Effect.succeed(30000)
+      )
+      yield* Effect.race(
+        Effect.sleep(Duration.millis(intervalMs)),
+        Queue.take(pollTrigger)
+      )
+    }
+  }) as Effect.Effect<never, never, OrchestratorDeps | WorkflowStore>
 }
 
 // ─── Reconciliation (SPEC.md §16.3) ──────────────────────────────────────────
@@ -118,7 +130,8 @@ function reconcileRunningIssues(
   config: ResolvedConfig,
   tracker: {
     fetchIssueStatesByIds(ids: ReadonlyArray<string>): Effect.Effect<ReadonlyArray<Issue>, unknown>
-  }
+  },
+  resolvedAssigneeId: string | null
 ): Effect.Effect<void, never, OrchestratorDeps | WorkspaceManager> {
   return Effect.gen(function* () {
     yield* reconcileStalls(stateRef, config)
@@ -141,6 +154,9 @@ function reconcileRunningIssues(
     for (const issue of refreshed) {
       if (isTerminalState(issue.state, config.tracker.terminal_states)) {
         yield* terminateAndCleanup(stateRef, issue.id, true)
+      } else if (!isRoutableToWorker(issue, resolvedAssigneeId)) {
+        yield* Effect.logInfo(`Issue no longer routed to this worker: ${issue.identifier} assignee=${issue.assignee_id}`)
+        yield* terminateAndCleanup(stateRef, issue.id, false)
       } else if (isActiveState(issue.state, config.tracker.active_states)) {
         yield* Ref.update(stateRef, (s) => updateRunningIssueSnapshot(s, issue))
       } else {

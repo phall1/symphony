@@ -29,7 +29,10 @@ const CANDIDATE_ISSUES_QUERY = `
         labels { nodes { name } }
         createdAt
         updatedAt
-        relations(filter: { type: { eq: "blocks" } }) {
+        assignee {
+          id
+        }
+        inverseRelations(filter: { type: { eq: "blocks" } }) {
           nodes {
             relatedIssue {
               id
@@ -54,15 +57,21 @@ const ISSUES_BY_IDS_QUERY = `
         id
         identifier
         state { name }
+        assignee {
+          id
+        }
       }
     }
   }
 `
 
 const ISSUES_BY_STATES_QUERY = `
-  query IssuesByStates($states: [String!]!, $first: Int!, $after: String) {
+  query IssuesByStates($projectSlug: String!, $states: [String!]!, $first: Int!, $after: String) {
     issues(
-      filter: { state: { name: { in: $states } } }
+      filter: {
+        project: { slugId: { eq: $projectSlug } }
+        state: { name: { in: $states } }
+      }
       first: $first
       after: $after
     ) {
@@ -83,7 +92,7 @@ const ISSUES_BY_STATES_QUERY = `
 
 function normalizeIssue(node: Record<string, unknown>): Issue {
   const labels = (node["labels"] as { nodes: Array<{ name: string }> } | undefined)?.nodes ?? []
-  const relations = (node["relations"] as { nodes: Array<{ relatedIssue: Record<string, unknown> }> } | undefined)?.nodes ?? []
+  const relations = (node["inverseRelations"] as { nodes: Array<{ relatedIssue: Record<string, unknown> }> } | undefined)?.nodes ?? []
 
   const blocked_by: BlockerRef[] = relations.map((r) => {
     const ri = r.relatedIssue
@@ -94,6 +103,8 @@ function normalizeIssue(node: Record<string, unknown>): Issue {
     }
   })
 
+  const assigneeId = (node["assignee"] as { id: string } | null | undefined)?.id ?? null
+
   return {
     id: node["id"] as string,
     identifier: node["identifier"] as string,
@@ -103,6 +114,7 @@ function normalizeIssue(node: Record<string, unknown>): Issue {
     state: ((node["state"] as { name: string } | null)?.name) ?? "",
     branch_name: (node["branchName"] as string | null) ?? null,
     url: (node["url"] as string | null) ?? null,
+    assignee_id: assigneeId,
     labels: labels.map((l) => l.name.toLowerCase()),
     blocked_by,
     created_at: node["createdAt"] ? new Date(node["createdAt"] as string) : null,
@@ -120,6 +132,7 @@ function normalizeMinimalIssue(node: Record<string, unknown>): Issue {
     state: ((node["state"] as { name: string } | null)?.name) ?? "",
     branch_name: null,
     url: null,
+    assignee_id: (node["assignee"] as { id: string } | null | undefined)?.id ?? null,
     labels: [],
     blocked_by: [],
     created_at: null,
@@ -129,7 +142,7 @@ function normalizeMinimalIssue(node: Record<string, unknown>): Issue {
 
 // ─── HTTP Client ──────────────────────────────────────────────────────────────
 
-async function graphqlRequest(
+export async function graphqlRequest(
   endpoint: string,
   apiKey: string,
   query: string,
@@ -234,9 +247,21 @@ export function fetchIssueStatesByIds(
   })
 }
 
+export async function fetchViewerId(endpoint: string, apiKey: string): Promise<string | null> {
+  const VIEWER_QUERY = `query SymphonyLinearViewer { viewer { id } }`
+  try {
+    const data = await graphqlRequest(endpoint, apiKey, VIEWER_QUERY, {}) as Record<string, unknown>
+    const viewer = data["viewer"] as { id: string } | null
+    return viewer?.id ?? null
+  } catch {
+    return null
+  }
+}
+
 export function fetchIssuesByStates(
   endpoint: string,
   apiKey: string,
+  projectSlug: string,
   states: ReadonlyArray<string>
 ): Effect.Effect<ReadonlyArray<Issue>, TrackerError> {
   if (states.length === 0) return Effect.succeed([])
@@ -248,6 +273,7 @@ export function fetchIssuesByStates(
 
       while (true) {
         const data = await graphqlRequest(endpoint, apiKey, ISSUES_BY_STATES_QUERY, {
+          projectSlug,
           states: [...states],
           first: PAGE_SIZE,
           after: cursor,
@@ -259,7 +285,9 @@ export function fetchIssuesByStates(
         }
 
         if (!issuesData.pageInfo.hasNextPage) break
-        if (!issuesData.pageInfo.endCursor) break
+        if (!issuesData.pageInfo.endCursor) {
+          throw { _tag: "TrackerError" as const, code: "linear_missing_end_cursor" as const, message: "Linear API returned hasNextPage=true but no endCursor in fetchIssuesByStates" }
+        }
         cursor = issuesData.pageInfo.endCursor
       }
 

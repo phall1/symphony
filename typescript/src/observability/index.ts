@@ -12,8 +12,8 @@ export { startHttpServer } from "./http.js"
 export function makeObservabilityLive(port: number): Layer.Layer<never, never, OrchestratorStateRef> {
   const httpLayer = Layer.effectDiscard(
     Effect.gen(function* () {
-      const { ref } = yield* OrchestratorStateRef
-      yield* startHttpServer(port, ref)
+      const { ref, pollTrigger } = yield* OrchestratorStateRef
+      yield* startHttpServer(port, ref, pollTrigger)
     })
   )
 

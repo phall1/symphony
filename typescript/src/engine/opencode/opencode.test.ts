@@ -16,6 +16,7 @@ const testConfig: ResolvedConfig = {
     project_slug: "test",
     active_states: [],
     terminal_states: [],
+    assignee: null,
   },
   polling: { interval_ms: 60000 },
   workspace: { root: "/tmp" },
@@ -49,7 +50,7 @@ const testConfig: ResolvedConfig = {
     agent: "default",
     port: 0,
   },
-  server: { port: null },
+  server: { port: null, host: "127.0.0.1" },
 }
 
 interface FetchCall {
