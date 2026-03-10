@@ -2,7 +2,7 @@ import { Effect, Layer } from "effect"
 import { mkdir, realpath, rm } from "node:fs/promises"
 import { join, resolve, sep } from "node:path"
 import { runHookScript } from "./hooks.js"
-import { WorkspaceManager } from "../services.js"
+import { WorkspaceManager, WorkflowStore } from "../services.js"
 import type { Workspace, ResolvedConfig } from "../types.js"
 import { WorkspaceError } from "../types.js"
 
@@ -101,11 +101,11 @@ function removeWorkspace(
   })
 }
 
-export function makeWorkspaceManagerLive(config: ResolvedConfig): Layer.Layer<WorkspaceManager> {
+function makeWorkspaceManagerService(config: ResolvedConfig): WorkspaceManager["Service"] {
   const { root } = config.workspace
   const { hooks } = config
 
-  return Layer.succeed(WorkspaceManager, {
+  return {
     createForIssue: (identifier: string) =>
       createWorkspace(root, identifier, hooks),
 
@@ -118,7 +118,7 @@ export function makeWorkspaceManagerLive(config: ResolvedConfig): Layer.Layer<Wo
         if (!script) return Effect.void
         return runHookScript(script, wsPath, hooks.timeout_ms)
       }
-      
+
       const script = hook === "after_run" ? hooks.after_run : hooks.before_remove
       if (!script) return Effect.void
       return Effect.catchCause(
@@ -126,5 +126,19 @@ export function makeWorkspaceManagerLive(config: ResolvedConfig): Layer.Layer<Wo
         () => Effect.logWarning(`[WorkspaceManager] ${hook} hook failed for ${wsPath}, ignoring`)
       ) as Effect.Effect<void, WorkspaceError>
     },
-  })
+  }
 }
+
+export function makeWorkspaceManagerLive(config: ResolvedConfig): Layer.Layer<WorkspaceManager> {
+  return Layer.succeed(WorkspaceManager, makeWorkspaceManagerService(config))
+}
+
+export const WorkspaceManagerLive: Layer.Layer<WorkspaceManager, never, WorkflowStore> = Layer.effect(
+  WorkspaceManager
+)(
+  Effect.gen(function* () {
+    const store = yield* WorkflowStore
+    const config = yield* Effect.orDie(store.getResolved())
+    return makeWorkspaceManagerService(config)
+  })
+)

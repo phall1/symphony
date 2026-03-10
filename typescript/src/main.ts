@@ -1,7 +1,7 @@
 import { Effect, Layer } from "effect"
 import { makeWorkflowStoreLive } from "./config/index.js"
-import { makeLinearTrackerClientLive } from "./tracker/index.js"
-import { makeWorkspaceManagerLive } from "./workspace/index.js"
+import { LinearTrackerClientLive } from "./tracker/index.js"
+import { WorkspaceManagerLive } from "./workspace/index.js"
 import { PromptEngineLive } from "./prompt/index.js"
 import { makeCodexAgentEngineLive } from "./engine/codex/index.js"
 import { makeOpenCodeAgentEngineLive } from "./engine/opencode/index.js"
@@ -12,21 +12,9 @@ import { WorkflowStore } from "./services.js"
 export function main(workflowPath: string, port: number = 0): Effect.Effect<void> {
   const workflowStoreLayer = makeWorkflowStoreLive(workflowPath)
 
-  const trackerLayer = Layer.unwrap(
-    Effect.gen(function* () {
-      const store = yield* WorkflowStore
-      const config = yield* store.getResolved()
-      return makeLinearTrackerClientLive(config)
-    })
-  ).pipe(Layer.provide(workflowStoreLayer))
+  const trackerLayer = LinearTrackerClientLive.pipe(Layer.provide(workflowStoreLayer))
 
-  const workspaceLayer = Layer.unwrap(
-    Effect.gen(function* () {
-      const store = yield* WorkflowStore
-      const config = yield* store.getResolved()
-      return makeWorkspaceManagerLive(config)
-    })
-  ).pipe(Layer.provide(workflowStoreLayer))
+  const workspaceLayer = WorkspaceManagerLive.pipe(Layer.provide(workflowStoreLayer))
 
   const agentEngineLayer = Layer.unwrap(
     Effect.gen(function* () {

@@ -1,25 +1,23 @@
 import { Effect, Ref, Stream, Cause } from "effect"
-import type { Issue, OrchestratorState, ResolvedConfig, AgentEvent, WorkspaceError } from "../types.js"
+import type { Issue, AgentEvent } from "../types.js"
 import { updateRunningEntry, addTokenDelta, setRateLimits, isActiveState } from "./state.js"
-import { WorkspaceManager, TrackerClient, WorkflowStore, PromptEngine } from "../services.js"
+import { WorkspaceManager, TrackerClient, WorkflowStore, PromptEngine, OrchestratorStateRef } from "../services.js"
 import { AgentEngine } from "../engine/agent.js"
 import type { AgentSession } from "../engine/agent.js"
 
 export function runWorker(
-  stateRef: Ref.Ref<OrchestratorState>,
   issue: Issue,
-  attempt: number | null,
-  config: ResolvedConfig
+  attempt: number | null
 ): Effect.Effect<
   void,
   unknown,
-  WorkspaceManager | TrackerClient | WorkflowStore | PromptEngine | AgentEngine
+  WorkspaceManager | TrackerClient | WorkflowStore | PromptEngine | AgentEngine | OrchestratorStateRef
 > {
   return Effect.gen(function* () {
-    const workspaceManager = yield* WorkspaceManager
-    const tracker = yield* TrackerClient
+    const { ref: stateRef } = yield* OrchestratorStateRef
     const store = yield* WorkflowStore
-    const promptEngine = yield* PromptEngine
+    const config = yield* store.getResolved()
+    const workspaceManager = yield* WorkspaceManager
     const agentEngine = yield* AgentEngine
 
     const workspace = yield* workspaceManager.createForIssue(issue.identifier)
@@ -47,7 +45,7 @@ export function runWorker(
       }),
       (cause) =>
         Effect.gen(function* () {
-          yield* bestEffortAfterRun(workspaceManager, workspace.path)
+          yield* bestEffortAfterRun(workspace.path)
           return yield* Effect.failCause(cause)
         })
     )
@@ -61,43 +59,44 @@ export function runWorker(
     )
 
      yield* Effect.catchCause(
-       turnsLoop(stateRef, issue, attempt, config, session, tracker, store, promptEngine),
+       turnsLoop(issue, attempt, session),
        (cause) =>
          Effect.gen(function* () {
            yield* Effect.catchCause(session.dispose(), (cause) => Effect.logDebug("session dispose failed (error path)").pipe(Effect.annotateLogs("cause", Cause.pretty(cause))))
-           yield* bestEffortAfterRun(workspaceManager, workspace.path)
+           yield* bestEffortAfterRun(workspace.path)
            return yield* Effect.failCause(cause)
          })
      )
 
     yield* Effect.catchCause(session.dispose(), (cause) => Effect.logDebug("session dispose failed").pipe(Effect.annotateLogs("cause", Cause.pretty(cause))))
-    yield* bestEffortAfterRun(workspaceManager, workspace.path)
+    yield* bestEffortAfterRun(workspace.path)
   })
 }
 
 function bestEffortAfterRun(
-  workspaceManager: {
-    runHook(hook: "after_run" | "before_remove", workspacePath: string): Effect.Effect<void, WorkspaceError>
-  },
   workspacePath: string
-): Effect.Effect<void> {
-  return Effect.catchCause(
-    workspaceManager.runHook("after_run", workspacePath),
-    (cause) => Effect.logDebug("after_run hook failed (best-effort)").pipe(Effect.annotateLogs("cause", Cause.pretty(cause)))
-  )
+): Effect.Effect<void, never, WorkspaceManager> {
+  return Effect.gen(function* () {
+    const workspaceManager = yield* WorkspaceManager
+    yield* Effect.catchCause(
+      workspaceManager.runHook("after_run", workspacePath),
+      (cause) => Effect.logDebug("after_run hook failed (best-effort)").pipe(Effect.annotateLogs("cause", Cause.pretty(cause)))
+    )
+  })
 }
 
 function turnsLoop(
-  stateRef: Ref.Ref<OrchestratorState>,
   issue: Issue,
   attempt: number | null,
-  config: ResolvedConfig,
-  session: AgentSession,
-  tracker: { fetchIssueStatesByIds(ids: ReadonlyArray<string>): Effect.Effect<ReadonlyArray<Issue>, unknown> },
-  store: { get(): Effect.Effect<{ readonly prompt_template: string }, unknown> },
-  promptEngine: { render(template: string, issue: Issue, attempt: number | null): Effect.Effect<string, unknown> }
-): Effect.Effect<void, unknown> {
+  session: AgentSession
+): Effect.Effect<void, unknown, OrchestratorStateRef | WorkflowStore | TrackerClient | PromptEngine> {
   return Effect.gen(function* () {
+    const { ref: stateRef } = yield* OrchestratorStateRef
+    const store = yield* WorkflowStore
+    const config = yield* store.getResolved()
+    const tracker = yield* TrackerClient
+    const promptEngine = yield* PromptEngine
+
     const maxTurns = config.agent.max_turns
     let currentIssue = issue
     let turnNumber = 1
@@ -127,7 +126,7 @@ function turnsLoop(
       })
 
       yield* Stream.runForEach(turnStream, (event: AgentEvent) =>
-        handleAgentEvent(stateRef, currentIssue.id, event)
+        handleAgentEvent(currentIssue.id, event)
       )
 
       const refreshedIssues = yield* tracker.fetchIssueStatesByIds([currentIssue.id])
@@ -145,11 +144,11 @@ function turnsLoop(
 }
 
 function handleAgentEvent(
-  stateRef: Ref.Ref<OrchestratorState>,
   issueId: string,
   event: AgentEvent
-): Effect.Effect<void> {
+): Effect.Effect<void, never, OrchestratorStateRef> {
   return Effect.gen(function* () {
+    const { ref: stateRef } = yield* OrchestratorStateRef
     const now = new Date()
 
     switch (event.type) {

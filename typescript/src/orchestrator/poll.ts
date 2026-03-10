@@ -1,5 +1,5 @@
-import { Effect, Ref, Duration, Queue, Cause } from "effect"
-import type { Issue, OrchestratorState, ResolvedConfig } from "../types.js"
+import { Effect, Ref, Duration, Queue, Cause, Schedule } from "effect"
+import type { Issue, ResolvedConfig } from "../types.js"
 import {
   terminateRunningIssue,
   updateRunningIssueSnapshot,
@@ -31,13 +31,11 @@ import { validateDispatchConfig } from "../config/index.js"
 
 // ─── Tick (SPEC.md §16.2) ────────────────────────────────────────────────────
 
-export function tick(
-  stateRef: Ref.Ref<OrchestratorState>
-): Effect.Effect<void, never, OrchestratorDeps> {
+export function tick(): Effect.Effect<void, never, OrchestratorDeps> {
   return Effect.gen(function* () {
+    const { ref: stateRef } = yield* OrchestratorStateRef
     const store = yield* WorkflowStore
     const tracker = yield* TrackerClient
-    const obsRef = yield* OrchestratorStateRef
 
     const config = yield* Effect.catchCause(store.getResolved(), () =>
       Effect.gen(function* () {
@@ -45,21 +43,17 @@ export function tick(
         return null as ResolvedConfig | null
       })
     )
-    if (!config) {
-      yield* notifyObservers(stateRef, obsRef)
-      return
-    }
+    if (!config) return
 
     const resolvedAssigneeId = tracker.resolvedAssigneeId
 
-    yield* reconcileRunningIssues(stateRef, config, tracker, resolvedAssigneeId)
+    yield* reconcileRunningIssues()
 
     const validationErrors = validateDispatchConfig(config)
     if (validationErrors.length > 0) {
       for (const err of validationErrors) {
         yield* Effect.logWarning(`Config validation: ${err.message}`)
       }
-      yield* notifyObservers(stateRef, obsRef)
       return
     }
 
@@ -72,10 +66,7 @@ export function tick(
         })
     )
 
-    if (issues === null) {
-      yield* notifyObservers(stateRef, obsRef)
-      return
-    }
+    if (issues === null) return
 
     const sorted = sortForDispatch(issues)
 
@@ -83,34 +74,21 @@ export function tick(
       const state = yield* Ref.get(stateRef)
       if (availableGlobalSlots(state) <= 0) break
       if (isEligible(issue, state, config, resolvedAssigneeId)) {
-        yield* dispatchIssue(stateRef, issue, null, config)
+        yield* dispatchIssue(issue, null)
       }
     }
-
-    yield* notifyObservers(stateRef, obsRef)
-  })
-}
-
-function notifyObservers(
-  stateRef: Ref.Ref<OrchestratorState>,
-  obsRef: { readonly ref: Ref.Ref<OrchestratorState> }
-): Effect.Effect<void> {
-  return Effect.gen(function* () {
-    const current = yield* Ref.get(stateRef)
-    yield* Ref.set(obsRef.ref, current)
   })
 }
 
 // ─── Poll Loop ────────────────────────────────────────────────────────────────
 
-export function pollLoop(
-  stateRef: Ref.Ref<OrchestratorState>,
-  pollTrigger: Queue.Queue<void>
-): Effect.Effect<never, never, OrchestratorDeps | WorkflowStore> {
+export function pollLoop(): Effect.Effect<void, never, OrchestratorDeps> {
   return Effect.gen(function* () {
     const store = yield* WorkflowStore
-    while (true) {
-      yield* tick(stateRef)
+    const { pollTrigger } = yield* OrchestratorStateRef
+
+    const cycle = Effect.gen(function* () {
+      yield* tick()
       const intervalMs = yield* Effect.catchCause(
         store.getResolved().pipe(Effect.map((c) => c.polling.interval_ms)),
         () => Effect.succeed(30000)
@@ -119,22 +97,23 @@ export function pollLoop(
         Effect.sleep(Duration.millis(intervalMs)),
         Queue.take(pollTrigger)
       )
-    }
-  }) as Effect.Effect<never, never, OrchestratorDeps | WorkflowStore>
+    })
+
+    yield* Effect.repeat(cycle, Schedule.forever)
+  })
 }
 
 // ─── Reconciliation (SPEC.md §16.3) ──────────────────────────────────────────
 
-function reconcileRunningIssues(
-  stateRef: Ref.Ref<OrchestratorState>,
-  config: ResolvedConfig,
-  tracker: {
-    fetchIssueStatesByIds(ids: ReadonlyArray<string>): Effect.Effect<ReadonlyArray<Issue>, unknown>
-  },
-  resolvedAssigneeId: string | null
-): Effect.Effect<void, never, OrchestratorDeps | WorkspaceManager> {
+function reconcileRunningIssues(): Effect.Effect<void, never, OrchestratorDeps | WorkspaceManager> {
   return Effect.gen(function* () {
-    yield* reconcileStalls(stateRef, config)
+    const { ref: stateRef } = yield* OrchestratorStateRef
+    const store = yield* WorkflowStore
+    const config = yield* Effect.orDie(store.getResolved())
+    const tracker = yield* TrackerClient
+    const resolvedAssigneeId = tracker.resolvedAssigneeId
+
+    yield* reconcileStalls()
 
     const state = yield* Ref.get(stateRef)
     const runningIds = [...state.running.keys()]
@@ -153,24 +132,25 @@ function reconcileRunningIssues(
 
     for (const issue of refreshed) {
       if (isTerminalState(issue.state, config.tracker.terminal_states)) {
-        yield* terminateAndCleanup(stateRef, issue.id, true)
+        yield* terminateAndCleanup(issue.id, true)
       } else if (!isRoutableToWorker(issue, resolvedAssigneeId)) {
         yield* Effect.logInfo(`Issue no longer routed to this worker: ${issue.identifier} assignee=${issue.assignee_id}`)
-        yield* terminateAndCleanup(stateRef, issue.id, false)
+        yield* terminateAndCleanup(issue.id, false)
       } else if (isActiveState(issue.state, config.tracker.active_states)) {
         yield* Ref.update(stateRef, (s) => updateRunningIssueSnapshot(s, issue))
       } else {
-        yield* terminateAndCleanup(stateRef, issue.id, false)
+        yield* terminateAndCleanup(issue.id, false)
       }
     }
   })
 }
 
-function reconcileStalls(
-  stateRef: Ref.Ref<OrchestratorState>,
-  config: ResolvedConfig
-): Effect.Effect<void, never, OrchestratorDeps> {
+function reconcileStalls(): Effect.Effect<void, never, OrchestratorDeps> {
   return Effect.gen(function* () {
+    const { ref: stateRef } = yield* OrchestratorStateRef
+    const store = yield* WorkflowStore
+    const config = yield* Effect.orDie(store.getResolved())
+
     const stallTimeoutMs = config.codex.stall_timeout_ms
     if (stallTimeoutMs <= 0) return
 
@@ -193,16 +173,18 @@ function reconcileStalls(
     for (const { issueId, elapsedMs } of toStall) {
       yield* Effect.logWarning(`Issue stalled: issue_id=${issueId} elapsed_ms=${elapsedMs}`)
 
-      const currentState = yield* Ref.get(stateRef)
-      const entry = currentState.running.get(issueId)
+      const entry = yield* Ref.modify(stateRef, (s) => {
+        const runningEntry = s.running.get(issueId)
+        if (!runningEntry) return [null, s] as const
+        return [runningEntry, terminateRunningIssue(s, issueId).state] as const
+      })
       if (!entry) continue
 
       const nextAttempt = nextAttemptFromRunning(entry)
 
       yield* interruptFiber(entry.worker_fiber)
-      yield* Ref.update(stateRef, (s) => terminateRunningIssue(s, issueId).state)
 
-      yield* scheduleRetry(stateRef, issueId, nextAttempt ?? 1, config, {
+      yield* scheduleRetry(issueId, nextAttempt ?? 1, {
         identifier: entry.identifier,
         error: `stalled for ${elapsedMs}ms without activity`,
       })
@@ -211,17 +193,18 @@ function reconcileStalls(
 }
 
 function terminateAndCleanup(
-  stateRef: Ref.Ref<OrchestratorState>,
   issueId: string,
   cleanupWorkspace: boolean
-): Effect.Effect<void, never, WorkspaceManager> {
+): Effect.Effect<void, never, WorkspaceManager | OrchestratorStateRef> {
   return Effect.gen(function* () {
-    const state = yield* Ref.get(stateRef)
-    const entry = state.running.get(issueId)
-    if (!entry) {
-      yield* Ref.update(stateRef, (s) => releaseClaim(s, issueId))
-      return
-    }
+    const { ref: stateRef } = yield* OrchestratorStateRef
+
+    const entry = yield* Ref.modify(stateRef, (s) => {
+      const runningEntry = s.running.get(issueId)
+      if (!runningEntry) return [null, releaseClaim(s, issueId)] as const
+      return [runningEntry, s] as const
+    })
+    if (!entry) return
 
     yield* interruptFiber(entry.worker_fiber)
 
@@ -240,31 +223,32 @@ function terminateAndCleanup(
 // ─── Worker Exit Handling (SPEC.md §16.6) ─────────────────────────────────────
 
 export function handleWorkerExit(
-  stateRef: Ref.Ref<OrchestratorState>,
   issueId: string,
-  normal: boolean,
-  config: ResolvedConfig
+  normal: boolean
 ): Effect.Effect<void, never, OrchestratorDeps> {
   return Effect.gen(function* () {
-    const state = yield* Ref.get(stateRef)
-    const entry = state.running.get(issueId)
-    if (!entry) return
+    const { ref: stateRef } = yield* OrchestratorStateRef
+    const store = yield* WorkflowStore
+    const config = yield* Effect.orDie(store.getResolved())
 
-    yield* Ref.update(stateRef, (s) => {
-      const s2 = addRuntimeSeconds(s, entry)
-      return removeRunning(s2, issueId).state
+    const entry = yield* Ref.modify(stateRef, (s) => {
+      const e = s.running.get(issueId)
+      if (!e) return [null, s] as const
+      const s2 = addRuntimeSeconds(s, e)
+      return [e, removeRunning(s2, issueId).state] as const
     })
+    if (!entry) return
 
     if (normal) {
       yield* Ref.update(stateRef, (s) => addCompleted(s, issueId))
-      yield* scheduleRetry(stateRef, issueId, 1, config, {
+      yield* scheduleRetry(issueId, 1, {
         identifier: entry.identifier,
         error: null,
         isContinuation: true,
       })
     } else {
       const nextAttempt = nextAttemptFromRunning(entry)
-      yield* scheduleRetry(stateRef, issueId, nextAttempt ?? 1, config, {
+      yield* scheduleRetry(issueId, nextAttempt ?? 1, {
         identifier: entry.identifier,
         error: "worker exited abnormally",
       })
@@ -274,10 +258,10 @@ export function handleWorkerExit(
 
 // ─── Startup Terminal Cleanup (SPEC.md §8.6) ──────────────────────────────────
 
-export function startupTerminalCleanup(
-  config: ResolvedConfig
-): Effect.Effect<void, never, TrackerClient | WorkspaceManager> {
+export function startupTerminalCleanup(): Effect.Effect<void, never, TrackerClient | WorkspaceManager | WorkflowStore> {
   return Effect.gen(function* () {
+    const store = yield* WorkflowStore
+    const config = yield* Effect.orDie(store.getResolved())
     const tracker = yield* TrackerClient
     const workspaceManager = yield* WorkspaceManager
 

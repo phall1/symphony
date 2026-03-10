@@ -283,7 +283,7 @@ describe("reconciliation — §17.4 bullets 5, 6, 7", () => {
         const layers = makeMockLayers(config, stateRef, {
           onFetchIssueStatesByIds: () => { fetchCalled = true },
         })
-        yield* Effect.provide(tick(stateRef), layers)
+        yield* Effect.provide(tick(), layers)
         return yield* Ref.get(stateRef)
       })
     )
@@ -309,7 +309,7 @@ describe("reconciliation — §17.4 bullets 5, 6, 7", () => {
           refreshedIssues: [refreshedIssue],
           onRemoveForIssue: () => { removeCalled = true },
         })
-        yield* Effect.provide(tick(stateRef), layers)
+        yield* Effect.provide(tick(), layers)
         return yield* Ref.get(stateRef)
       })
     )
@@ -335,7 +335,7 @@ describe("reconciliation — §17.4 bullets 5, 6, 7", () => {
           refreshedIssues: [refreshedIssue],
           onRemoveForIssue: (id) => { removedIdentifier = id },
         })
-        yield* Effect.provide(tick(stateRef), layers)
+        yield* Effect.provide(tick(), layers)
         return yield* Ref.get(stateRef)
       })
     )
@@ -360,7 +360,7 @@ describe("handleWorkerExit — §17.4 bullets 8 & 9", () => {
         const stateRef = yield* Ref.make(initialState)
         const layers = makeMockLayers(config, stateRef)
         yield* Effect.provide(
-          handleWorkerExit(stateRef, issue.id, true, config),
+          handleWorkerExit(issue.id, true),
           layers
         )
         return yield* Ref.get(stateRef)
@@ -392,7 +392,7 @@ describe("handleWorkerExit — §17.4 bullets 8 & 9", () => {
         const stateRef = yield* Ref.make(initialState)
         const layers = makeMockLayers(config, stateRef)
         yield* Effect.provide(
-          handleWorkerExit(stateRef, issue.id, false, config),
+          handleWorkerExit(issue.id, false),
           layers
         )
         return yield* Ref.get(stateRef)
@@ -425,7 +425,7 @@ describe("handleWorkerExit — §17.4 bullets 8 & 9", () => {
         const stateRef = yield* Ref.make(initialState)
         const layers = makeMockLayers(config, stateRef)
         yield* Effect.provide(
-          handleWorkerExit(stateRef, issue.id, false, config),
+          handleWorkerExit(issue.id, false),
           layers
         )
         return yield* Ref.get(stateRef)
@@ -527,7 +527,7 @@ describe("stall detection — §17.4 bullet 12", () => {
         )
         const stateRef = yield* Ref.make(initialState)
         const layers = makeMockLayers(config, stateRef)
-        yield* Effect.provide(tick(stateRef), layers)
+        yield* Effect.provide(tick(), layers)
         return yield* Ref.get(stateRef)
       })
     )
@@ -581,7 +581,7 @@ describe("slot exhaustion — §17.4 bullet 13", () => {
           candidateIssues: [candidate],
           refreshedIssues: [refreshed],
         })
-        yield* Effect.provide(tick(stateRef), layers)
+        yield* Effect.provide(tick(), layers)
         return yield* Ref.get(stateRef)
       })
     )

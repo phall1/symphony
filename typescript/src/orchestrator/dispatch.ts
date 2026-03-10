@@ -114,13 +114,15 @@ export type OrchestratorDeps =
   | AgentEngine
 
 export function dispatchIssue(
-  stateRef: Ref.Ref<OrchestratorState>,
   issue: Issue,
-  attempt: number | null,
-  config: ResolvedConfig
+  attempt: number | null
 ): Effect.Effect<void, never, OrchestratorDeps> {
   return Effect.gen(function* () {
-    const workerEffect = runWorker(stateRef, issue, attempt, config)
+    const { ref: stateRef } = yield* OrchestratorStateRef
+    const store = yield* WorkflowStore
+    const config = yield* Effect.orDie(store.getResolved())
+
+    const workerEffect = runWorker(issue, attempt)
 
     const fiber = yield* Effect.catchCause(
       Effect.forkChild(workerEffect),
@@ -128,7 +130,7 @@ export function dispatchIssue(
         Effect.gen(function* () {
           yield* Effect.logWarning(`Failed to spawn worker for ${issue.identifier}`)
           const nextAttempt = typeof attempt === "number" ? attempt + 1 : 1
-          yield* scheduleRetry(stateRef, issue.id, nextAttempt, config, {
+          yield* scheduleRetry(issue.id, nextAttempt, {
             identifier: issue.identifier,
             error: "failed to spawn agent",
           })
@@ -155,17 +157,21 @@ interface RetryMeta {
 }
 
 export function scheduleRetry(
-  stateRef: Ref.Ref<OrchestratorState>,
   issueId: string,
   attempt: number,
-  config: ResolvedConfig,
   meta: RetryMeta
 ): Effect.Effect<void, never, OrchestratorDeps> {
   return Effect.gen(function* () {
-    const state = yield* Ref.get(stateRef)
-    const existingRetry = state.retry_attempts.get(issueId)
-    if (existingRetry?.timer_handle) {
-      yield* interruptFiber(existingRetry.timer_handle)
+    const { ref: stateRef } = yield* OrchestratorStateRef
+    const store = yield* WorkflowStore
+    const config = yield* Effect.orDie(store.getResolved())
+
+    const existingTimerHandle = yield* Ref.modify(stateRef, (s) => {
+      const existingRetry = s.retry_attempts.get(issueId)
+      return [existingRetry?.timer_handle ?? null, s] as const
+    })
+    if (existingTimerHandle) {
+      yield* interruptFiber(existingTimerHandle)
     }
 
     const delayMs = retryDelay(
@@ -179,7 +185,7 @@ export function scheduleRetry(
     const timerFiber = yield* Effect.forkChild(
       Effect.gen(function* () {
         yield* Effect.sleep(Duration.millis(delayMs))
-        yield* handleRetryTimer(stateRef, issueId, config)
+        yield* handleRetryTimer(issueId)
       })
     )
 
@@ -203,13 +209,13 @@ export function scheduleRetry(
 // ─── Retry Timer Handler (SPEC.md §16.6) ─────────────────────────────────────
 
 function handleRetryTimer(
-  stateRef: Ref.Ref<OrchestratorState>,
-  issueId: string,
-  config: ResolvedConfig
+  issueId: string
 ): Effect.Effect<void, never, OrchestratorDeps> {
   return Effect.gen(function* () {
     const tracker = yield* TrackerClient
-    const obsRef = yield* OrchestratorStateRef
+    const { ref: stateRef } = yield* OrchestratorStateRef
+    const store = yield* WorkflowStore
+    const config = yield* Effect.orDie(store.getResolved())
 
     const popResult = yield* Ref.modify(stateRef, (s) => {
       const result = removeRetryEntry(s, issueId)
@@ -222,7 +228,7 @@ function handleRetryTimer(
       tracker.fetchCandidateIssues(),
       () =>
         Effect.gen(function* () {
-          yield* scheduleRetry(stateRef, issueId, popResult.attempt + 1, config, {
+          yield* scheduleRetry(issueId, popResult.attempt + 1, {
             identifier: popResult.identifier,
             error: "retry poll failed",
           })
@@ -240,7 +246,7 @@ function handleRetryTimer(
 
     const state = yield* Ref.get(stateRef)
     if (availableGlobalSlots(state) <= 0) {
-      yield* scheduleRetry(stateRef, issueId, popResult.attempt + 1, config, {
+      yield* scheduleRetry(issueId, popResult.attempt + 1, {
         identifier: issue.identifier,
         error: "no available orchestrator slots",
       })
@@ -253,7 +259,7 @@ function handleRetryTimer(
     if (perStateLimit !== undefined) {
       const used = runningCountForState(state.running, issue.state)
       if (used >= perStateLimit) {
-        yield* scheduleRetry(stateRef, issueId, popResult.attempt + 1, config, {
+        yield* scheduleRetry(issueId, popResult.attempt + 1, {
           identifier: issue.identifier,
           error: "no available orchestrator slots (per-state limit)",
         })
@@ -261,10 +267,7 @@ function handleRetryTimer(
       }
     }
 
-    yield* dispatchIssue(stateRef, issue, popResult.attempt, config)
-
-    const current = yield* Ref.get(stateRef)
-    yield* Ref.set(obsRef.ref, current)
+    yield* dispatchIssue(issue, popResult.attempt)
   })
 }
 

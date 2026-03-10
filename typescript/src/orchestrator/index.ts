@@ -25,7 +25,7 @@ export const OrchestratorLive = Layer.effect(OrchestratorStateRef)(
       )
     }
 
-    yield* startupTerminalCleanup(config)
+    yield* startupTerminalCleanup()
 
     const initialState = makeInitialState(
       config.polling.interval_ms,
@@ -35,10 +35,8 @@ export const OrchestratorLive = Layer.effect(OrchestratorStateRef)(
     const pollTrigger = yield* Queue.unbounded<void>()
     const orchestratorStateRef = { ref: stateRef, pollTrigger }
 
-    // Provide OrchestratorStateRef to the poll loop INTERNALLY
-    // so tick() can access it without creating a circular external dependency
     yield* Effect.forkChild(
-      pollLoop(stateRef, pollTrigger).pipe(
+      pollLoop().pipe(
         Effect.provideService(OrchestratorStateRef, orchestratorStateRef)
       )
     )
