@@ -3,6 +3,7 @@ import { constants, openSync } from "node:fs"
 import { homedir } from "node:os"
 import { join, resolve } from "node:path"
 import { spawn } from "node:child_process"
+import { ensurePlaneBootstrap } from "./plane-bootstrap.js"
 
 type PlaneProject = {
   readonly id?: string
@@ -115,9 +116,9 @@ function loadSettings(): Settings {
     workflowPath: resolve(rootDir, "WORKFLOW.plane.local.generated.md"),
     planeRepoPath: resolve(process.env["SYMPHONY_PLANE_REPO"]?.trim() || defaultPlaneRepoPath),
     planeBaseUrl: (process.env["PLANE_BASE_URL"]?.trim() || "http://localhost:8000").replace(/\/+$/, ""),
-    planeApiKey: requireEnv("PLANE_API_KEY"),
-    planeWorkspaceSlug: requireEnv("PLANE_WORKSPACE_SLUG"),
-    planeProjectId: requireEnv("PLANE_PROJECT_ID"),
+    planeApiKey: process.env["PLANE_API_KEY"]?.trim() ?? "",
+    planeWorkspaceSlug: process.env["PLANE_WORKSPACE_SLUG"]?.trim() ?? "",
+    planeProjectId: process.env["PLANE_PROJECT_ID"]?.trim() ?? "",
     observabilityPort: parseInt(process.env["SYMPHONY_OBSERVABILITY_PORT"]?.trim() || "3010", 10),
     workspaceRoot: process.env["SYMPHONY_WORKSPACE_ROOT"]?.trim() || `${homedir()}/code/symphony-plane-test-workspaces`,
     pollIntervalMs: parseInt(process.env["SYMPHONY_POLL_INTERVAL_MS"]?.trim() || "15000", 10),
@@ -132,6 +133,18 @@ function loadSettings(): Settings {
     opencodeServerUrl: (explicitServerUrl || `http://${opencodeServerHost}:${opencodeServerPort}`).replace(/\/+$/, ""),
     opencodeAgent: process.env["SYMPHONY_OPENCODE_AGENT"]?.trim() || "build",
     opencodeModel: process.env["SYMPHONY_OPENCODE_MODEL"]?.trim() || "anthropic/claude-sonnet-4-20250514",
+  }
+}
+
+function applyBootstrap(
+  settings: Settings,
+  bootstrap: { apiKey: string; workspaceSlug: string; projectId: string },
+): Settings {
+  return {
+    ...settings,
+    planeApiKey: settings.planeApiKey || bootstrap.apiKey,
+    planeWorkspaceSlug: settings.planeWorkspaceSlug || bootstrap.workspaceSlug,
+    planeProjectId: settings.planeProjectId || bootstrap.projectId,
   }
 }
 
@@ -382,12 +395,12 @@ async function ensurePlaneApi(settings: Settings): Promise<void> {
   process.stdout.write("Ensuring Plane backend containers are up\n")
   runCommand(["docker", "compose", "-f", "docker-compose-local.yml", "up", "-d"], settings.planeRepoPath)
 
-  process.stdout.write("Waiting for Plane API auth to come up")
+  process.stdout.write("Waiting for Plane API to come up")
   let lastPrintedSecond = -1
-  await waitFor("Plane API auth", async () => {
+  await waitFor("Plane API", async () => {
     try {
-      await fetchJson<{ id?: string }>(settings, "/api/v1/users/me/")
-      return true
+      const response = await fetch(`${settings.planeBaseUrl}/api/instances/`)
+      return response.ok
     } catch {
       return false
     }
@@ -514,13 +527,19 @@ async function ensureOpencodeServer(settings: Settings): Promise<void> {
   process.stdout.write(`- version: ${health?.version ?? "unknown"}\n`)
 }
 
-async function ensureStackUp(settings: Settings): Promise<void> {
+async function ensureStackUp(settings: Settings): Promise<Settings> {
   await ensureStateDirs(settings)
   await checkLocalDependencies(settings)
   await ensurePlaneApi(settings)
+
+  // Bootstrap Plane instance if needed (idempotent)
+  const bootstrap = await ensurePlaneBootstrap(settings.planeBaseUrl, settings.stateDir)
+  settings = applyBootstrap(settings, bootstrap)
+
   await ensurePlaneUiBuild(settings)
   await ensurePlaneUiServers(settings)
   await ensureOpencodeServer(settings)
+  return settings
 }
 
 async function checkPlaneApi(settings: Settings): Promise<{ projectIdentifier: string }> {
@@ -713,7 +732,7 @@ async function runSymphony(settings: Settings): Promise<void> {
 
 async function main(): Promise<void> {
   const command = parseCommand(process.argv)
-  const settings = loadSettings()
+  let settings = loadSettings()
 
   if (command === "down") {
     await ensureStateDirs(settings)
@@ -729,7 +748,7 @@ async function main(): Promise<void> {
   }
 
   if (command === "up") {
-    await ensureStackUp(settings)
+    settings = await ensureStackUp(settings)
     await checkPlaneApi(settings)
     process.stdout.write("Plane/Symphony local prerequisites are ready.\n")
     process.stdout.write(`- Plane web UI: ${settings.planeUiBaseUrl}\n`)
@@ -739,7 +758,7 @@ async function main(): Promise<void> {
     return
   }
 
-  await ensureStackUp(settings)
+  settings = await ensureStackUp(settings)
   await checkPlaneApi(settings)
 
   if (command === "check") {
