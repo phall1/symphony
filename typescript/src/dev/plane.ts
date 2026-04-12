@@ -88,15 +88,6 @@ function parseCommand(argv: string[]): Command {
   process.exit(1)
 }
 
-function requireEnv(name: string): string {
-  const value = process.env[name]?.trim()
-  if (!value) {
-    process.stderr.write(`Missing required env var: ${name}\n`)
-    process.exit(1)
-  }
-  return value
-}
-
 function loadSettings(): Settings {
   const rootDir = process.cwd()
   const defaultPlaneRepoPath = resolve(rootDir, "../../plane")
