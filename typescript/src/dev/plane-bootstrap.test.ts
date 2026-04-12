@@ -16,8 +16,8 @@ describe("plane-bootstrap state persistence", () => {
     await rm(tempDir, { recursive: true, force: true })
   })
 
-  it("readBootstrapState returns null when no file exists", () => {
-    const result = readBootstrapState(tempDir)
+  it("readBootstrapState returns null when no file exists", async () => {
+    const result = await readBootstrapState(tempDir)
     expect(result).toBeNull()
   })
 
@@ -30,7 +30,7 @@ describe("plane-bootstrap state persistence", () => {
     }
 
     await writeBootstrapState(tempDir, state)
-    const result = readBootstrapState(tempDir)
+    const result = await readBootstrapState(tempDir)
 
     expect(result).toEqual(state)
   })
@@ -38,7 +38,7 @@ describe("plane-bootstrap state persistence", () => {
   it("readBootstrapState returns null for corrupted (non-JSON) file", async () => {
     await writeFile(join(tempDir, "bootstrap.json"), "this is not json {{{", "utf8")
 
-    const result = readBootstrapState(tempDir)
+    const result = await readBootstrapState(tempDir)
     expect(result).toBeNull()
   })
 
@@ -49,7 +49,7 @@ describe("plane-bootstrap state persistence", () => {
       "utf8",
     )
 
-    const result = readBootstrapState(tempDir)
+    const result = await readBootstrapState(tempDir)
     expect(result).toBeNull()
   })
 })

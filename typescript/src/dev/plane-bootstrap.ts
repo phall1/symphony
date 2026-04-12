@@ -49,7 +49,7 @@ type IssueEntry = {
 const BOOTSTRAP_FILE = "bootstrap.json"
 
 const ADMIN_EMAIL = "admin@symphony.local"
-const ADMIN_PASSWORD = "Symphony!Dev2026#"
+const ADMIN_PASSWORD = process.env["SYMPHONY_PLANE_ADMIN_PASSWORD"]?.trim() || "Symphony!Dev2026#"
 const ADMIN_FIRST_NAME = "Symphony"
 const ADMIN_LAST_NAME = "Admin"
 const COMPANY_NAME = "Symphony Dev"
@@ -71,9 +71,9 @@ const SEED_ISSUES: ReadonlyArray<{ readonly name: string; readonly stateName: st
 // State persistence
 // ---------------------------------------------------------------------------
 
-export function readBootstrapState(stateDir: string): BootstrapResult | null {
+export async function readBootstrapState(stateDir: string): Promise<BootstrapResult | null> {
   try {
-    const raw = require("node:fs").readFileSync(join(stateDir, BOOTSTRAP_FILE), "utf8")
+    const raw = await readFile(join(stateDir, BOOTSTRAP_FILE), "utf8")
     const parsed: unknown = JSON.parse(raw)
     if (
       typeof parsed === "object" &&
@@ -99,6 +99,13 @@ export async function writeBootstrapState(stateDir: string, result: BootstrapRes
 // ---------------------------------------------------------------------------
 // HTTP helpers
 // ---------------------------------------------------------------------------
+//
+// Plane exposes two API surfaces:
+//   - Internal API (`/api/...`): uses session cookie auth. Used here for
+//     workspace/project management and admin operations.
+//   - Public API (`/api/v1/...`): uses API-key auth (`X-Api-Key` header).
+//     Used for work-item (issue) operations and by the Symphony runtime.
+//
 
 /**
  * POST form-urlencoded data (for admin sign-up / sign-in).
@@ -339,6 +346,10 @@ async function ensureSeedIssues(
  * Since we can't retrieve the token value after creation,
  * we delete any existing one and create a fresh one.
  * Returns the token string.
+ *
+ * NOTE: This is intentionally destructive (not idempotent). Plane's API does
+ * not return token values after initial creation, so we must delete-and-recreate
+ * to obtain a usable token string.
  */
 async function ensureApiToken(baseUrl: string, cookie: string): Promise<string> {
   const tokens = await planeJsonGet<ReadonlyArray<ApiTokenEntry>>(baseUrl, "/api/users/api-tokens/", cookie)
@@ -371,7 +382,7 @@ async function ensureApiToken(baseUrl: string, cookie: string): Promise<string> 
  */
 export async function ensurePlaneBootstrap(baseUrl: string, stateDir: string): Promise<BootstrapResult> {
   // Check for existing valid state
-  const cached = readBootstrapState(stateDir)
+  const cached = await readBootstrapState(stateDir)
   if (cached) {
     const valid = await validateApiKey(baseUrl, cached.apiKey)
     if (valid) {
