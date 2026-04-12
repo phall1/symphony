@@ -6,6 +6,29 @@ Use this flow when iterating on the Symphony + Plane integration locally.
 
 Make the local Plane instance the tracker under test while Symphony runs with the OpenCode engine in a repeatable loop.
 
+## Quick Start
+
+```bash
+# First time — brings up everything from zero (no env vars needed):
+bun run plane:up
+
+# Run Symphony against local Plane:
+bun run plane:dev
+
+# Clean stop:
+bun run plane:down
+```
+
+On first run, `plane:up` will automatically:
+1. Start Plane backend Docker containers
+2. Create an admin user (`admin@symphony.local`)
+3. Create a "Symphony" workspace and "SYM" project with default states
+4. Seed test issues
+5. Generate an API token
+6. Save all credentials to `.plane-dev/bootstrap.json`
+
+Subsequent runs skip bootstrap if the saved API key is still valid.
+
 ## Prerequisites
 
 - Local Plane is cloned at `/Users/Patrick.Hall/workspace/plane`
@@ -13,17 +36,14 @@ Make the local Plane instance the tracker under test while Symphony runs with th
 - `opencode` is installed and available in `PATH`
 - Symphony dependencies installed with Bun
 
-## Required env vars
+## Optional env var overrides
+
+These take precedence over auto-bootstrapped values:
 
 ```bash
-export PLANE_API_KEY="..."
-export PLANE_WORKSPACE_SLUG="your-workspace-slug"
-export PLANE_PROJECT_ID="your-project-uuid"
-```
-
-## Optional env vars
-
-```bash
+export PLANE_API_KEY="..."           # Override bootstrapped API key
+export PLANE_WORKSPACE_SLUG="..."    # Override bootstrapped workspace
+export PLANE_PROJECT_ID="..."        # Override bootstrapped project
 export PLANE_BASE_URL="http://localhost:8000"
 export SYMPHONY_OBSERVABILITY_PORT="3010"
 export SYMPHONY_WORKSPACE_ROOT="$HOME/code/symphony-plane-test-workspaces"
@@ -121,7 +141,7 @@ This will:
    ```bash
    bun run verify
    ```
-4. Bring prerequisites up:
+4. Bring prerequisites up (auto-bootstraps on first run):
    ```bash
    bun run plane:up
    ```
@@ -129,16 +149,15 @@ This will:
    ```bash
    bun run plane:check
    ```
-6. Create or update a simple Plane issue in an active state (`Todo` / `In Progress`)
-7. Run Symphony:
+6. Run Symphony:
    ```bash
    bun run plane:dev
    ```
-8. Observe:
+7. Observe:
    ```bash
    curl http://127.0.0.1:3010/api/v1/state
    ```
-9. Inspect workspace output under:
+8. Inspect workspace output under:
    ```text
    ~/code/symphony-plane-test-workspaces
    ```
