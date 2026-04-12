@@ -46,7 +46,7 @@ const testConfig: ResolvedConfig = {
   opencode: {
     mode: "shared",
     server_url: SERVER_URL,
-    model: "claude-3-5-sonnet",
+    model: "anthropic/claude-3-5-sonnet",
     agent: "default",
     port: 0,
   },
@@ -121,12 +121,14 @@ function setupRoutedFetch(sseEvents: object[]): void {
     const method = options?.method ?? "GET"
     if (method === "POST" && url === `${SERVER_URL}/session`)
       return Promise.resolve(makeJsonResponse({ id: SESSION_ID }))
-    if (method === "POST" && url === `${SERVER_URL}/session/${SESSION_ID}/message`)
-      return Promise.resolve(makeJsonResponse({ queued: true }))
+    if (method === "POST" && url === `${SERVER_URL}/session/${SESSION_ID}/prompt_async`)
+      return Promise.resolve({ ok: true, status: 204, text: () => Promise.resolve("") } as Response)
     if (method === "GET" && url === `${SERVER_URL}/event`)
       return Promise.resolve(makeSseResponse(sseEvents))
+    if (method === "POST" && url.startsWith(`${SERVER_URL}/session/${SESSION_ID}/permissions/`))
+      return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve("") } as Response)
     if (method === "POST" && url.startsWith(`${SERVER_URL}/permission/`))
-      return Promise.resolve({ ok: true, status: 200 } as Response)
+      return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve("") } as Response)
     if (method === "POST" && url === `${SERVER_URL}/session/${SESSION_ID}/abort`)
       return Promise.resolve(makeJsonResponse({}))
     return Promise.reject(new Error(`Unexpected fetch: ${method} ${url}`))
@@ -204,7 +206,7 @@ describe("OpenCode engine — shared mode", () => {
     }
   })
 
-  it("runTurn sends POST /session/:id/message with parts, model, agent", async () => {
+  it("runTurn sends POST /session/:id/prompt_async with parts, parsed model, agent", async () => {
     setupRoutedFetch([
       { type: "session.status", sessionID: SESSION_ID, data: { type: "idle" } },
     ])
@@ -223,14 +225,14 @@ describe("OpenCode engine — shared mode", () => {
       }),
     )
 
-    const msgCall = fetchCalls.find((c) => c.url.includes("/message"))
+    const msgCall = fetchCalls.find((c) => c.url.includes("/prompt_async"))
     expect(msgCall).toBeDefined()
     expect(msgCall!.method).toBe("POST")
-    expect(msgCall!.url).toBe(`${SERVER_URL}/session/${SESSION_ID}/message`)
-    expect(msgCall!.body).toMatchObject({
+    expect(msgCall!.url).toBe(`${SERVER_URL}/session/${SESSION_ID}/prompt_async`)
+    expect(msgCall!.body).toEqual({
       parts: [{ type: "text", text: "Implement feature X" }],
       agent: "default",
-      model: "claude-3-5-sonnet",
+      model: { providerID: "anthropic", modelID: "claude-3-5-sonnet" },
     })
   })
 
@@ -286,7 +288,7 @@ describe("OpenCode engine — shared mode", () => {
     expect(events[1]).toMatchObject({ type: "turn_failed", error: "Something went wrong" })
   })
 
-  it("SSE permission.asked emits approval_auto_approved and POSTs to /permission/:id", async () => {
+  it("SSE permission.asked emits approval_auto_approved and POSTs to /session/:id/permissions/:permissionId", async () => {
     setupRoutedFetch([
       {
         type: "permission.asked",
@@ -319,9 +321,9 @@ describe("OpenCode engine — shared mode", () => {
 
     expect(events[events.length - 1]).toMatchObject({ type: "turn_completed" })
 
-    const permCall = fetchCalls.find((c) => c.url.includes("/permission/"))
+    const permCall = fetchCalls.find((c) => c.url.includes("/permissions/"))
     expect(permCall).toBeDefined()
-    expect(permCall!.url).toBe(`${SERVER_URL}/permission/perm-xyz`)
+    expect(permCall!.url).toBe(`${SERVER_URL}/session/${SESSION_ID}/permissions/perm-xyz`)
     expect(permCall!.method).toBe("POST")
   })
 

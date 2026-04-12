@@ -16,6 +16,11 @@ interface OpenCodeSSEEvent {
   readonly [key: string]: unknown
 }
 
+type OpenCodeModelSelector = {
+  readonly providerID: string
+  readonly modelID: string
+}
+
 interface ServerConnection {
   readonly baseUrl: string
   readonly process?: { kill: () => void }
@@ -79,7 +84,7 @@ const postNoBody = (
   workspacePath: string,
 ): Effect.Effect<void, AgentEngineError> =>
   Effect.gen(function* () {
-    yield* Effect.tryPromise({
+    const resp = yield* Effect.tryPromise({
       try: () =>
         fetch(`${baseUrl}${path}`, {
           method: "POST",
@@ -94,6 +99,16 @@ const postNoBody = (
         cause: err,
       }),
     })
+
+    if (!resp.ok) {
+      const text = yield* Effect.tryPromise({
+        try: () => resp.text(),
+        catch: () => new AgentEngineError({ message: "Failed to read error body" }),
+      })
+      return yield* Effect.fail(new AgentEngineError({
+        message: `HTTP POST ${path} returned ${resp.status}: ${text}`,
+      }))
+    }
   })
 
 // ─── Per-workspace Server Mode ────────────────────────────────────────────────
@@ -219,7 +234,7 @@ const spawnPerWorkspaceServer = (
           accumulated += new TextDecoder().decode(value)
 
           const portMatch = accumulated.match(
-            /(?:port\s*[=:]\s*|listening\s+on\s+(?:port\s+)?|localhost:)(\d+)/i,
+            /(?:port\s*[=:]\s*|listening\s+on\s+(?:https?:\/\/)?(?:localhost|127\.0\.0\.1):?|(?:localhost|127\.0\.0\.1):)(\d+)/i,
           )
           if (portMatch?.[1]) {
             reader.releaseLock()
@@ -262,32 +277,30 @@ const subscribeSSE = (
   baseUrl: string,
   sessionId: string,
   workspacePath: string,
-): Stream.Stream<OpenCodeSSEEvent, AgentSessionError> =>
-  Stream.unwrap(
-    Effect.gen(function* () {
-      const resp = yield* Effect.tryPromise({
-        try: () =>
-          fetch(`${baseUrl}/event`, {
-            headers: {
-              Accept: "text/event-stream",
-              "x-opencode-directory": workspacePath,
-            },
-          }),
-        catch: (err) => new AgentSessionError({
-          message: `SSE connection failed: ${String(err)}`,
-          cause: err,
+): Effect.Effect<Stream.Stream<OpenCodeSSEEvent, AgentSessionError>, AgentSessionError> =>
+  Effect.gen(function* () {
+    const resp = yield* Effect.tryPromise({
+      try: () =>
+        fetch(`${baseUrl}/event`, {
+          headers: {
+            Accept: "text/event-stream",
+            "x-opencode-directory": workspacePath,
+          },
         }),
-      })
+      catch: (err) => new AgentSessionError({
+        message: `SSE connection failed: ${String(err)}`,
+        cause: err,
+      }),
+    })
 
-      if (!resp.ok || !resp.body) {
-        return yield* Effect.fail(new AgentSessionError({
-          message: `SSE connection returned ${resp.status}`,
-        }))
-      }
+    if (!resp.ok || !resp.body) {
+      return yield* Effect.fail(new AgentSessionError({
+        message: `SSE connection returned ${resp.status}`,
+      }))
+    }
 
-      return parseSSEStream(resp.body, sessionId)
-    }),
-  )
+    return parseSSEStream(resp.body, sessionId)
+  })
 
 const parseSSEStream = (
   body: ReadableStream<Uint8Array>,
@@ -296,7 +309,6 @@ const parseSSEStream = (
   const reader = body.getReader()
   const decoder = new TextDecoder()
   let buffer = ""
-  let streamDone = false
 
   return Stream.unfold<OpenCodeSSEEvent[], OpenCodeSSEEvent, AgentSessionError, never>(
     [],
@@ -310,8 +322,6 @@ const parseSSEStream = (
             return [event, pending.slice(1)] as const
           }
 
-          if (streamDone) return undefined
-
           const result = yield* Effect.tryPromise({
             try: () => reader.read(),
             catch: (err) => new AgentSessionError({
@@ -321,8 +331,9 @@ const parseSSEStream = (
           })
 
           if (result.done) {
-            streamDone = true
-            return undefined
+            return yield* Effect.fail(new AgentSessionError({
+              message: "SSE stream closed unexpectedly before a terminal session event was observed",
+            }))
           }
 
           buffer += decoder.decode(result.value, { stream: true })
@@ -354,6 +365,19 @@ const parseSSEStream = (
 
 // ─── Event Mapping ────────────────────────────────────────────────────────────
 
+const toModelSelector = (model: string | undefined): OpenCodeModelSelector | undefined => {
+  const trimmed = model?.trim()
+  if (!trimmed) return undefined
+
+  const slashIndex = trimmed.indexOf("/")
+  if (slashIndex <= 0 || slashIndex >= trimmed.length - 1) return undefined
+
+  return {
+    providerID: trimmed.slice(0, slashIndex),
+    modelID: trimmed.slice(slashIndex + 1),
+  }
+}
+
 // Maps OpenCode SSE event → AgentEvent + terminal flag
 const mapSSEEvent = (
   event: OpenCodeSSEEvent,
@@ -381,10 +405,36 @@ const mapSSEEvent = (
     return { agentEvent: { type: "approval_auto_approved", description: String(desc) }, terminal: false }
   }
 
+  if (eventType === "message.updated") {
+    const info = (data as Record<string, unknown>)["info"] as Record<string, unknown> | undefined
+    const tokens = info?.["tokens"] as Record<string, unknown> | undefined
+    const input = typeof tokens?.["input"] === "number" ? tokens["input"] : undefined
+    const output = typeof tokens?.["output"] === "number" ? tokens["output"] : undefined
+    const total = typeof tokens?.["total"] === "number" ? tokens["total"] : undefined
+    if (input !== undefined && output !== undefined && total !== undefined) {
+      return {
+        agentEvent: { type: "token_usage", input, output, total },
+        terminal: false,
+      }
+    }
+  }
+
   if (eventType === "message.part.updated") {
-    const content = (data as Record<string, unknown>)["content"] ??
+    const part = (data as Record<string, unknown>)["part"] as Record<string, unknown> | undefined
+    const content = part?.["text"] ??
+      (data as Record<string, unknown>)["content"] ??
       (data as Record<string, unknown>)["text"] ?? ""
-    return { agentEvent: { type: "notification", message: String(content).slice(0, 500) }, terminal: false }
+
+    if (typeof content === "string" && content.length > 0) {
+      return { agentEvent: { type: "notification", message: content.slice(0, 500) }, terminal: false }
+    }
+  }
+
+  if (eventType === "message.part.delta") {
+    const delta = (data as Record<string, unknown>)["delta"]
+    if (typeof delta === "string" && delta.length > 0) {
+      return { agentEvent: { type: "notification", message: delta.slice(0, 500) }, terminal: false }
+    }
   }
 
   if (eventType === "server.heartbeat") {
@@ -398,10 +448,19 @@ const mapSSEEvent = (
 
 const autoApprovePermission = (
   baseUrl: string,
+  sessionId: string,
   permissionId: string,
   workspacePath: string,
 ): Effect.Effect<void> =>
-  postNoBody(baseUrl, `/permission/${permissionId}`, { reply: "approve" }, workspacePath).pipe(
+  postNoBody(
+    baseUrl,
+    `/session/${sessionId}/permissions/${permissionId}`,
+    { response: "approve" },
+    workspacePath,
+  ).pipe(
+    Effect.catch(() =>
+      postNoBody(baseUrl, `/permission/${permissionId}`, { reply: "approve" }, workspacePath),
+    ),
     Effect.catch((error) => Effect.logDebug("permission auto-approve failed").pipe(Effect.annotateLogs("cause", error.message))),
   )
 
@@ -465,9 +524,10 @@ export function makeOpenCodeAgentEngineService(): AgentEngine["Service"] {
           sessionId,
           threadId: sessionId,
 
-          runTurn: (turnInput) => {
-            const turnStream = Effect.gen(function* () {
+          runTurn: (turnInput): Stream.Stream<AgentEvent, AgentSessionError> => {
+            const turnStream: Effect.Effect<Stream.Stream<AgentEvent, AgentSessionError>, AgentSessionError> = Effect.gen(function* () {
               const started: AgentEvent = { type: "session_started", sessionId }
+              const modelSelector = toModelSelector(ocConfig.model)
 
               yield* Effect.logInfo("opencode turn start").pipe(
                 Effect.annotateLogs("sessionId", sessionId),
@@ -475,13 +535,15 @@ export function makeOpenCodeAgentEngineService(): AgentEngine["Service"] {
                 Effect.annotateLogs("model", ocConfig.model || "(unset)"),
               )
 
-              yield* jsonPost(
+              const sseEvents = yield* subscribeSSE(baseUrl, sessionId, workspacePath)
+
+              const promptError = yield* postNoBody(
                 baseUrl,
-                `/session/${sessionId}/message`,
+                `/session/${sessionId}/prompt_async`,
                 {
                   parts: [{ type: "text", text: turnInput.prompt }],
                   ...(ocConfig.agent ? { agent: ocConfig.agent } : {}),
-                  ...(ocConfig.model ? { model: ocConfig.model } : {}),
+                  ...(modelSelector ? { model: modelSelector } : {}),
                 },
                 workspacePath,
               ).pipe(
@@ -489,9 +551,16 @@ export function makeOpenCodeAgentEngineService(): AgentEngine["Service"] {
                   message: err.message,
                   cause: err.cause,
                 })),
+                Effect.as(null as AgentSessionError | null),
+                Effect.catch((err) => Effect.succeed(err)),
               )
 
-              const sseEvents = subscribeSSE(baseUrl, sessionId, workspacePath)
+              if (promptError) {
+                return Stream.concat(
+                  Stream.make(started),
+                  Stream.make({ type: "turn_failed", error: promptError.message } as AgentEvent),
+                )
+              }
 
               const agentEvents: Stream.Stream<AgentEvent, AgentSessionError> = Stream.flatMap(
                 sseEvents,
@@ -505,7 +574,7 @@ export function makeOpenCodeAgentEngineService(): AgentEngine["Service"] {
                       sseEvent["id"]
                     if (typeof permId === "string") {
                       return Stream.unwrap(
-                        autoApprovePermission(baseUrl, permId, workspacePath).pipe(
+                        autoApprovePermission(baseUrl, sessionId, permId, workspacePath).pipe(
                           Effect.map(() => Stream.make(agentEvent)),
                         ),
                       )

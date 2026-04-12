@@ -2,7 +2,11 @@
 
 TypeScript + Effect implementation of Symphony.
 
-This runtime polls Linear for active issues, creates isolated per-issue workspaces, and runs coding agents (OpenCode or Codex).
+This runtime polls supported trackers for active issues, creates isolated per-issue workspaces, and runs coding agents (OpenCode or Codex).
+
+Supported trackers:
+- Linear
+- Plane
 
 ## Quickstart (OpenCode default)
 
@@ -19,10 +23,14 @@ command -v bun
 command -v opencode
 ```
 
-3. Export your Linear API key:
+3. Export your tracker API key:
 
 ```bash
+# Linear
 export LINEAR_API_KEY="lin_api_..."
+
+# Plane
+export PLANE_API_KEY="plane_pat_..."
 ```
 
 4. Verify your workflow file exists (default is `./WORKFLOW.md`):
@@ -54,6 +62,39 @@ symphony [workflow-path] [--port <n>] [--debug]
 - `--port <n>`: run HTTP observability server
 - `--debug`: set `LOG_LEVEL=debug`
 
+## Tracker Configuration
+
+Tracker is selected in your `WORKFLOW.md` under `tracker.kind`.
+
+### Linear
+
+```yaml
+tracker:
+  kind: linear
+  api_key: $LINEAR_API_KEY
+  project_slug: my-linear-project
+  active_states: [Todo, In Progress]
+  terminal_states: [Done, Canceled, Cancelled, Closed]
+```
+
+### Plane
+
+```yaml
+tracker:
+  kind: plane
+  api_key: $PLANE_API_KEY
+  endpoint: https://api.plane.so
+  workspace_slug: my-workspace
+  project_id: 550e8400-e29b-41d4-a716-446655440000
+  active_states: [Todo, In Progress]
+  terminal_states: [Done, Canceled, Cancelled, Closed]
+```
+
+Notes:
+- `endpoint` for Plane should point at the Plane host root; Symphony uses `/api/v1/...` underneath.
+- `project_slug` is Linear-only.
+- `workspace_slug` + `project_id` are Plane-only.
+
 ## Engine Configuration
 
 Engine is selected in your `WORKFLOW.md` under `agent.engine`.
@@ -75,6 +116,7 @@ opencode:
 Notes:
 - `mode: per-workspace` makes Symphony spawn an OpenCode server per issue workspace.
 - `mode: shared` uses one external OpenCode server (`opencode.server_url` required).
+- For long-lived local dev loops, `mode: shared` is usually the better fit because it avoids per-issue server startup churn.
 - If you use Oh-My-OpenCode (or any dotfile preset), set `opencode.agent` explicitly here to avoid inheriting an unexpected default agent.
 - In per-workspace mode, `opencode.port: 0` is recommended for concurrent workers; non-zero binds a fixed port and can conflict if multiple issues run at once.
 
@@ -146,6 +188,24 @@ opencode --help >/dev/null
 
 If using shared mode, verify server URL is reachable.
 
+### Plane local stack helpers
+
+For the local Plane + Symphony loop in `typescript/`:
+
+```bash
+bun run plane:down
+bun run plane:up
+bun run plane:status
+bun run plane:check
+bun run plane:dev
+```
+
+Default local URLs used by that loop:
+- Plane web UI: `http://127.0.0.1:3005`
+- Plane admin UI: `http://127.0.0.1:3006/god-mode/`
+- Plane API: `http://localhost:8000`
+- Symphony UI: `http://127.0.0.1:3010`
+
 ### Auto-reap behavior (per-workspace mode)
 
 In per-workspace mode, Symphony tracks each spawned OpenCode server PID in the workspace at:
@@ -156,8 +216,12 @@ In per-workspace mode, Symphony tracks each spawned OpenCode server PID in the w
 
 Before launching a new per-workspace server, Symphony will attempt to terminate the previously tracked PID for that same workspace (if it is still an `opencode serve` process). This prevents stale orphaned servers from accumulating after interrupted runs.
 
-### Type safety check
+### Full verification
 
 ```bash
-bun run typecheck
+bun run verify
 ```
+
+This runs:
+- `bun run typecheck`
+- `bun run test`

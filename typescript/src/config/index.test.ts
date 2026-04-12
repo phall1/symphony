@@ -181,14 +181,50 @@ describe("resolveConfig", () => {
       }
     }
   })
+
+  it("expands tracker env vars for Plane workflow generation", () => {
+    const savedWorkspace = process.env["PLANE_WORKSPACE_SLUG_TEST"]
+    const savedProject = process.env["PLANE_PROJECT_ID_TEST"]
+    const savedEndpoint = process.env["PLANE_BASE_URL_TEST"]
+    process.env["PLANE_WORKSPACE_SLUG_TEST"] = "plane-workspace"
+    process.env["PLANE_PROJECT_ID_TEST"] = "project-uuid"
+    process.env["PLANE_BASE_URL_TEST"] = "http://localhost:8000"
+    try {
+      const config = resolveConfig({
+        tracker: {
+          kind: "plane",
+          endpoint: "$PLANE_BASE_URL_TEST",
+          workspace_slug: "$PLANE_WORKSPACE_SLUG_TEST",
+          project_id: "$PLANE_PROJECT_ID_TEST",
+        },
+      })
+      expect(config.tracker.endpoint).toBe("http://localhost:8000")
+      expect(config.tracker.workspace_slug).toBe("plane-workspace")
+      expect(config.tracker.project_id).toBe("project-uuid")
+    } finally {
+      if (savedWorkspace === undefined) delete process.env["PLANE_WORKSPACE_SLUG_TEST"]
+      else process.env["PLANE_WORKSPACE_SLUG_TEST"] = savedWorkspace
+      if (savedProject === undefined) delete process.env["PLANE_PROJECT_ID_TEST"]
+      else process.env["PLANE_PROJECT_ID_TEST"] = savedProject
+      if (savedEndpoint === undefined) delete process.env["PLANE_BASE_URL_TEST"]
+      else process.env["PLANE_BASE_URL_TEST"] = savedEndpoint
+    }
+  })
 })
 
 describe("validateDispatchConfig", () => {
-  it("returns missing_tracker_project_slug error when project_slug is absent", () => {
+  it("returns missing_tracker_project_slug error when project_slug is absent for linear", () => {
     const config = resolveConfig({ tracker: { kind: "linear", api_key: "my-key" } })
     const errors = validateDispatchConfig(config)
     const slugError = errors.find((e) => e.code === "missing_tracker_project_slug")
     expect(slugError).toBeDefined()
+  })
+
+  it("returns missing Plane fields when workspace_slug/project_id are absent", () => {
+    const config = resolveConfig({ tracker: { kind: "plane", api_key: "plane-key" } })
+    const errors = validateDispatchConfig(config)
+    expect(errors.some((e) => e.code === "missing_tracker_workspace_slug")).toBe(true)
+    expect(errors.some((e) => e.code === "missing_tracker_project_id")).toBe(true)
   })
 
   it("returns empty array when all required fields are present", () => {
@@ -199,7 +235,7 @@ describe("validateDispatchConfig", () => {
     expect(errors).toHaveLength(0)
   })
 
-  it("returns unsupported_tracker_kind error for non-linear tracker kind (§17.1 tracker.kind)", () => {
+  it("returns unsupported_tracker_kind error for unsupported tracker kind (§17.1 tracker.kind)", () => {
     const config = resolveConfig({
       tracker: {
         kind: "github" as unknown as "linear",
@@ -210,6 +246,28 @@ describe("validateDispatchConfig", () => {
     const errors = validateDispatchConfig(config)
     const kindError = errors.find((e) => e.code === "unsupported_tracker_kind")
     expect(kindError).toBeDefined()
+  })
+
+  it("accepts Plane tracker configuration when required fields are present", () => {
+    const config = resolveConfig({
+      tracker: {
+        kind: "plane",
+        api_key: "plane-key",
+        workspace_slug: "my-workspace",
+        project_id: "project-uuid",
+      },
+    })
+    const errors = validateDispatchConfig(config)
+    expect(errors).toHaveLength(0)
+  })
+
+  it("uses Plane endpoint default when tracker.kind is plane", () => {
+    const config = resolveConfig({
+      tracker: {
+        kind: "plane",
+      },
+    })
+    expect(config.tracker.endpoint).toBe("https://api.plane.so")
   })
 
   it("fails fast when engine is opencode and opencode.agent is missing", () => {
@@ -232,6 +290,36 @@ describe("validateDispatchConfig", () => {
     })
     const errors = validateDispatchConfig(config)
     expect(errors).toHaveLength(0)
+  })
+
+  it("expands opencode.server_url env vars", () => {
+    const savedServerUrl = process.env["OPENCODE_SERVER_URL_TEST"]
+    process.env["OPENCODE_SERVER_URL_TEST"] = "http://127.0.0.1:4096"
+
+    try {
+      const config = resolveConfig({
+        tracker: { kind: "linear", api_key: "my-key", project_slug: "my-project" },
+        agent: { engine: "opencode" },
+        opencode: { agent: "build", mode: "shared", server_url: "$OPENCODE_SERVER_URL_TEST" },
+      })
+
+      expect(config.opencode.server_url).toBe("http://127.0.0.1:4096")
+    } finally {
+      if (savedServerUrl === undefined) delete process.env["OPENCODE_SERVER_URL_TEST"]
+      else process.env["OPENCODE_SERVER_URL_TEST"] = savedServerUrl
+    }
+  })
+
+  it("fails fast when opencode shared mode is missing server_url", () => {
+    const config = resolveConfig({
+      tracker: { kind: "linear", api_key: "my-key", project_slug: "my-project" },
+      agent: { engine: "opencode" },
+      opencode: { agent: "build", mode: "shared", server_url: "" },
+    })
+    const errors = validateDispatchConfig(config)
+    expect(
+      errors.some((e) => e.message.includes("opencode.server_url is required when opencode.mode is \"shared\"")),
+    ).toBe(true)
   })
 })
 

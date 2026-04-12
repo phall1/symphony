@@ -31,10 +31,12 @@ export interface Issue {
 // ─── Workflow ─────────────────────────────────────────────────────────────────
 
 export interface TrackerConfig {
-  readonly kind?: string
+  readonly kind?: "linear" | "plane" | string
   readonly endpoint?: string
   readonly api_key?: string
   readonly project_slug?: string
+  readonly workspace_slug?: string
+  readonly project_id?: string
   readonly active_states?: ReadonlyArray<string>
   readonly terminal_states?: ReadonlyArray<string>
   readonly assignee?: string
@@ -108,10 +110,12 @@ export interface WorkflowDefinition {
 /** Fully resolved config with all defaults applied and $VAR expanded */
 export interface ResolvedConfig {
   readonly tracker: {
-    readonly kind: string
+    readonly kind: "linear" | "plane" | ""
     readonly endpoint: string
     readonly api_key: string
     readonly project_slug: string
+    readonly workspace_slug?: string
+    readonly project_id?: string
     readonly active_states: ReadonlyArray<string>
     readonly terminal_states: ReadonlyArray<string>
     readonly assignee: string | null
@@ -275,6 +279,8 @@ export type ConfigErrorCode =
   | "unsupported_tracker_kind"
   | "missing_tracker_api_key"
   | "missing_tracker_project_slug"
+  | "missing_tracker_workspace_slug"
+  | "missing_tracker_project_id"
   | "missing_codex_command"
   | "invalid_config"
 
@@ -287,11 +293,17 @@ export type TrackerErrorCode =
   | "unsupported_tracker_kind"
   | "missing_tracker_api_key"
   | "missing_tracker_project_slug"
+  | "missing_tracker_workspace_slug"
+  | "missing_tracker_project_id"
   | "linear_api_request"
   | "linear_api_status"
   | "linear_graphql_errors"
   | "linear_unknown_payload"
   | "linear_missing_end_cursor"
+  | "plane_api_request"
+  | "plane_api_status"
+  | "plane_unknown_payload"
+  | "plane_missing_next_cursor"
 
 export class TrackerError extends Data.TaggedError("TrackerError")<{
   readonly code: TrackerErrorCode

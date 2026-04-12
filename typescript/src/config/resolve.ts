@@ -14,7 +14,8 @@ import type {
 
 const DEFAULTS = {
   tracker: {
-    endpoint: "https://api.linear.app/graphql",
+    linear_endpoint: "https://api.linear.app/graphql",
+    plane_endpoint: "https://api.plane.so",
     active_states: ["Todo", "In Progress"],
     terminal_states: ["Done", "Cancelled", "Canceled", "Duplicate", "Closed"],
   },
@@ -107,10 +108,16 @@ export function resolveConfig(config: WorkflowConfig): ResolvedConfig {
 
   return {
     tracker: {
-      kind: t.kind ?? "",
-      endpoint: t.endpoint ?? DEFAULTS.tracker.endpoint,
+      kind: (t.kind ?? "") as "linear" | "plane" | "",
+      endpoint:
+        resolveEnvVar(t.endpoint)
+        ?? ((t.kind ?? "") === "plane"
+          ? DEFAULTS.tracker.plane_endpoint
+          : DEFAULTS.tracker.linear_endpoint),
       api_key: resolvedApiKey,
-      project_slug: t.project_slug ?? "",
+      project_slug: resolveEnvVar(t.project_slug) ?? "",
+      workspace_slug: resolveEnvVar(t.workspace_slug) ?? "",
+      project_id: resolveEnvVar(t.project_id) ?? "",
       active_states: parseStates(t.active_states, DEFAULTS.tracker.active_states),
       terminal_states: parseStates(t.terminal_states, DEFAULTS.tracker.terminal_states),
       assignee: t.assignee?.trim() || null,
@@ -146,9 +153,9 @@ export function resolveConfig(config: WorkflowConfig): ResolvedConfig {
     },
     opencode: {
       mode: (o.mode ?? DEFAULTS.opencode.mode) as "per-workspace" | "shared",
-      server_url: o.server_url ?? DEFAULTS.opencode.server_url,
-      model: o.model ?? DEFAULTS.opencode.model,
-      agent: o.agent ?? DEFAULTS.opencode.agent,
+      server_url: resolveEnvVar(o.server_url ?? undefined) ?? DEFAULTS.opencode.server_url,
+      model: resolveEnvVar(o.model) ?? DEFAULTS.opencode.model,
+      agent: resolveEnvVar(o.agent) ?? DEFAULTS.opencode.agent,
       port: o.port ?? DEFAULTS.opencode.port,
     },
     server: {

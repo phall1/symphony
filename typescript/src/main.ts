@@ -1,6 +1,6 @@
 import { Effect, Layer } from "effect"
 import { makeWorkflowStoreLive } from "./config/index.js"
-import { LinearTrackerClientLive } from "./tracker/index.js"
+import { TrackerClientLive } from "./tracker/index.js"
 import { WorkspaceManagerLive } from "./workspace/index.js"
 import { PromptEngineLive } from "./prompt/index.js"
 import { AgentEngineLive } from "./engine/index.js"
@@ -10,7 +10,7 @@ import { ObservabilityLive, makeObservabilityLive } from "./observability/index.
 export function main(workflowPath: string, port: number = 0): Effect.Effect<never> {
   const workflowStoreLayer = makeWorkflowStoreLive(workflowPath)
 
-  const trackerLayer = LinearTrackerClientLive.pipe(Layer.provide(workflowStoreLayer))
+  const trackerLayer = TrackerClientLive.pipe(Layer.provide(workflowStoreLayer))
 
   const workspaceLayer = WorkspaceManagerLive.pipe(Layer.provide(workflowStoreLayer))
 
