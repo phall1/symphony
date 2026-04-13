@@ -5,6 +5,8 @@ import {
   fetchIssueStatesByIds,
   fetchIssuesByStates,
   fetchProjectIdentifier,
+  transitionIssueToActive,
+  transitionIssueToCompleted,
   fetchViewerId,
 } from "./plane.js"
 
@@ -264,6 +266,119 @@ describe("Plane tracker", () => {
     )
 
     expect(result.map((issue) => issue.identifier)).toEqual(["PROJ-1", "PROJ-2"])
+  })
+
+  it("transitionIssueToActive patches the issue to In Progress", async () => {
+    const requests: Array<{ url: string; method?: string; body?: string }> = []
+
+    globalThis.fetch = (((url: string | URL, options?: RequestInit) => {
+      const requestRecord: { url: string; method?: string; body?: string } = {
+        url: String(url),
+      }
+      if (options?.method) requestRecord.method = options.method
+      if (typeof options?.body === "string") requestRecord.body = options.body
+      requests.push(requestRecord)
+
+      if (String(url).includes(`/projects/${PROJECT_ID}/states/`)) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({
+            next_page_results: false,
+            next_cursor: null,
+            results: [
+              makePlaneState({ id: "state-todo", name: "Todo" }),
+              makePlaneState({ id: "state-progress", name: "In Progress" }),
+            ],
+          }),
+        } as Response)
+      }
+
+      if (String(url).includes(`/work-items/issue-1/`) && (!options?.method || options.method === "GET")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(makePlaneIssue({ id: "issue-1", sequence_id: 77, state: "state-todo" })),
+        } as Response)
+      }
+
+      if (String(url).includes(`/work-items/issue-1/`) && options?.method === "PATCH") {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(makePlaneIssue({ id: "issue-1", sequence_id: 77, state: "state-progress" })),
+        } as Response)
+      }
+
+      throw new Error(`Unexpected URL: ${String(url)}`)
+    }) as unknown as typeof globalThis.fetch)
+
+    const result = await Effect.runPromise(
+      transitionIssueToActive(
+        ENDPOINT,
+        API_KEY,
+        WORKSPACE_SLUG,
+        PROJECT_ID,
+        PROJECT_IDENTIFIER,
+        ["Todo", "In Progress"],
+        "issue-1",
+      )
+    )
+
+    expect(result?.state).toBe("In Progress")
+    const patchRequest = requests.find((request) => request.method === "PATCH")
+    expect(patchRequest?.body).toContain("\"state\":\"state-progress\"")
+  })
+
+  it("transitionIssueToCompleted patches the issue to Done", async () => {
+    globalThis.fetch = (((url: string | URL, options?: RequestInit) => {
+      if (String(url).includes(`/projects/${PROJECT_ID}/states/`)) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({
+            next_page_results: false,
+            next_cursor: null,
+            results: [
+              makePlaneState({ id: "state-progress", name: "In Progress" }),
+              makePlaneState({ id: "state-done", name: "Done" }),
+            ],
+          }),
+        } as Response)
+      }
+
+      if (String(url).includes(`/work-items/issue-1/`) && (!options?.method || options.method === "GET")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(makePlaneIssue({ id: "issue-1", sequence_id: 88, state: "state-progress" })),
+        } as Response)
+      }
+
+      if (String(url).includes(`/work-items/issue-1/`) && options?.method === "PATCH") {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(makePlaneIssue({ id: "issue-1", sequence_id: 88, state: "state-done" })),
+        } as Response)
+      }
+
+      throw new Error(`Unexpected URL: ${String(url)}`)
+    }) as unknown as typeof globalThis.fetch)
+
+    const result = await Effect.runPromise(
+      transitionIssueToCompleted(
+        ENDPOINT,
+        API_KEY,
+        WORKSPACE_SLUG,
+        PROJECT_ID,
+        PROJECT_IDENTIFIER,
+        ["Done", "Canceled"],
+        "issue-1",
+      )
+    )
+
+    expect(result?.state).toBe("Done")
   })
 
   it("fails with plane_missing_next_cursor when Plane pagination is inconsistent", async () => {

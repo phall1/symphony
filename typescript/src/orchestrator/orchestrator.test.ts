@@ -145,6 +145,8 @@ function makeMockLayers(
     refreshedIssues?: Issue[]
     onRemoveForIssue?: (identifier: string) => void
     onFetchIssueStatesByIds?: (ids: ReadonlyArray<string>) => void
+    transitionIssueToActive?: Issue | null
+    transitionIssueToCompleted?: Issue | null
   } = {}
 ) {
   return Layer.mergeAll(
@@ -161,6 +163,8 @@ function makeMockLayers(
         return Effect.succeed(opts.refreshedIssues ?? [])
       },
       fetchIssuesByStates: (_states) => Effect.succeed([]),
+      transitionIssueToActive: (_issueId) => Effect.succeed(opts.transitionIssueToActive ?? null),
+      transitionIssueToCompleted: (_issueId) => Effect.succeed(opts.transitionIssueToCompleted ?? null),
       resolvedAssigneeId: null,
     }),
     Layer.succeed(WorkspaceManager, {
@@ -375,6 +379,38 @@ describe("handleWorkerExit — §17.4 bullets 8 & 9", () => {
     const retry = state.retry_attempts.get("issue-1")!
     expect(retry.attempt).toBe(1)
     expect(retry.error).toBeNull()
+  })
+
+  it("normal exit completes the tracker issue and cleans up workspace when tracker transition succeeds", async () => {
+    let removedIdentifier: string | null = null
+
+    const state = await Effect.runPromise(
+      Effect.gen(function* () {
+        const config = makeConfig({ tracker: { kind: "plane" } })
+        const issue = makeIssue({ state: "In Progress" })
+        const initialState = addRunning(
+          makeInitialState(5000, 10),
+          issue.id,
+          makeRunningEntry(issue, "/ws", null, DUMMY_FIBER)
+        )
+        const stateRef = yield* Ref.make(initialState)
+        const layers = makeMockLayers(config, stateRef, {
+          transitionIssueToCompleted: makeIssue({ state: "Done" }),
+          onRemoveForIssue: (identifier) => { removedIdentifier = identifier },
+        })
+        yield* Effect.provide(
+          handleWorkerExit(issue.id, true),
+          layers
+        )
+        return yield* Ref.get(stateRef)
+      })
+    )
+
+    expect(state.running.has("issue-1")).toBe(false)
+    expect(state.completed.has("issue-1")).toBe(true)
+    expect(state.retry_attempts.has("issue-1")).toBe(false)
+    expect(state.claimed.has("issue-1")).toBe(false)
+    expect(removedIdentifier).toBe("ABC-1")
   })
 
   it("abnormal exit increments attempt and uses exponential backoff delay", async () => {

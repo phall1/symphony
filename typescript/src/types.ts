@@ -214,6 +214,12 @@ export interface TokenTotals {
   readonly seconds_running: number
 }
 
+export interface RecentAgentEvent {
+  readonly at: Date
+  readonly type: AgentEvent["type"]
+  readonly summary: string
+}
+
 export interface RunningEntry {
   readonly issue_id: string
   readonly identifier: string
@@ -234,9 +240,10 @@ export interface RunningEntry {
   readonly turn_count: number
   readonly retry_attempt: number | null
   readonly started_at: Date
-   readonly workspace_path: string | null
-   // Worker fiber handle
-   readonly worker_fiber: Fiber.Fiber<void, unknown> | null
+  readonly workspace_path: string | null
+  readonly recent_agent_events: ReadonlyArray<RecentAgentEvent>
+  // Worker fiber handle
+  readonly worker_fiber: Fiber.Fiber<void, unknown> | null
 }
 
 export interface RetryEntry {
@@ -258,6 +265,55 @@ export interface OrchestratorState {
   readonly completed: ReadonlySet<string>
   readonly codex_totals: TokenTotals
   readonly codex_rate_limits: unknown | null
+}
+
+export interface RecentAgentEventRow {
+  readonly at: string
+  readonly type: AgentEvent["type"]
+  readonly summary: string
+}
+
+export interface RunningRow {
+  readonly issue_id: string
+  readonly issue_identifier: string
+  readonly state: string
+  readonly session_id: string | null
+  readonly turn_count: number
+  readonly last_event: string | null
+  readonly last_message: string | null
+  readonly started_at: string
+  readonly last_event_at: string | null
+  readonly tokens: {
+    readonly input_tokens: number
+    readonly output_tokens: number
+    readonly total_tokens: number
+  }
+  readonly recent_events: ReadonlyArray<RecentAgentEventRow>
+}
+
+export interface RetryRow {
+  readonly issue_id: string
+  readonly issue_identifier: string
+  readonly attempt: number
+  readonly due_at: string
+  readonly error: string | null
+}
+
+export interface RuntimeSnapshot {
+  readonly generated_at: string
+  readonly counts: {
+    readonly running: number
+    readonly retrying: number
+  }
+  readonly running: ReadonlyArray<RunningRow>
+  readonly retrying: ReadonlyArray<RetryRow>
+  readonly codex_totals: {
+    readonly input_tokens: number
+    readonly output_tokens: number
+    readonly total_tokens: number
+    readonly seconds_running: number
+  }
+  readonly rate_limits: unknown | null
 }
 
 // ─── Errors ───────────────────────────────────────────────────────────────────
@@ -359,35 +415,3 @@ export type SymphonyError =
   | WorkspaceError
   | AgentError
   | PromptError
-
-// ─── HTTP API Shapes ──────────────────────────────────────────────────────────
-
-export interface RunningRow {
-  readonly issue_id: string
-  readonly issue_identifier: string
-  readonly state: string
-  readonly session_id: string | null
-  readonly turn_count: number
-  readonly last_event: string | null
-  readonly last_message: string | null
-  readonly started_at: string
-  readonly last_event_at: string | null
-  readonly tokens: TokenUsage
-}
-
-export interface RetryRow {
-  readonly issue_id: string
-  readonly issue_identifier: string
-  readonly attempt: number
-  readonly due_at: string
-  readonly error: string | null
-}
-
-export interface RuntimeSnapshot {
-  readonly generated_at: string
-  readonly counts: { readonly running: number; readonly retrying: number }
-  readonly running: ReadonlyArray<RunningRow>
-  readonly retrying: ReadonlyArray<RetryRow>
-  readonly codex_totals: TokenTotals
-  readonly rate_limits: unknown | null
-}

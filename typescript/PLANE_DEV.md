@@ -167,13 +167,19 @@ This will:
 Title:
 
 ```text
-Create TEST_SYMPHONY.txt in repo root
+Create PLANE_LIVE_SMOKE.txt in repo root
 ```
 
 Description:
 
 ```text
-Create a file named TEST_SYMPHONY.txt in the repository root containing: hello from symphony
+Create a file named PLANE_LIVE_SMOKE.txt in the repository root containing exactly: plane live smoke ok
+```
+
+State:
+
+```text
+In Progress
 ```
 
 ## Current scope of Plane support

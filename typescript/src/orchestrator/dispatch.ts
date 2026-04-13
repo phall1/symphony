@@ -1,4 +1,4 @@
-import { Effect, Ref, Fiber, Duration, Cause } from "effect"
+import { Effect, Ref, Fiber, Duration, Cause, Exit } from "effect"
 import type { Issue, OrchestratorState, ResolvedConfig, RetryEntry } from "../types.js"
 import {
   normalizeState,
@@ -14,6 +14,7 @@ import {
   retryDelay,
 } from "./state.js"
 import { runWorker } from "./worker.js"
+import { handleWorkerExit } from "./worker-exit.js"
 import {
   WorkspaceManager,
   TrackerClient,
@@ -120,7 +121,7 @@ export function dispatchIssue(
   return Effect.gen(function* () {
     const { ref: stateRef } = yield* OrchestratorStateRef
     const store = yield* WorkflowStore
-    const config = yield* Effect.orDie(store.getResolved())
+    yield* Effect.orDie(store.getResolved())
 
     const workerEffect = runWorker(issue, attempt)
 
@@ -145,6 +146,24 @@ export function dispatchIssue(
 
     yield* Ref.update(stateRef, (s) =>
       addRunning(s, issue.id, makeRunningEntry(issue, "", attempt, fiber))
+    )
+
+    yield* Fiber.await(fiber).pipe(
+      Effect.flatMap((exit) => {
+        if (Exit.isSuccess(exit)) {
+          return handleWorkerExit(issue.id, true)
+        }
+        if (Cause.hasInterruptsOnly(exit.cause)) {
+          return Effect.void
+        }
+        return handleWorkerExit(issue.id, false)
+      }),
+      Effect.catchCause((cause) =>
+        Effect.logDebug("worker completion monitor failed").pipe(
+          Effect.annotateLogs("cause", Cause.pretty(cause))
+        )
+      ),
+      Effect.forkChild,
     )
 
     yield* Effect.logInfo(`Dispatched issue ${issue.identifier} attempt=${attempt}`)

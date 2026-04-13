@@ -64,6 +64,7 @@ function makeRunningEntry(overrides: Partial<RunningEntry> = {}): RunningEntry {
     retry_attempt: null,
     started_at: new Date(),
     workspace_path: null,
+    recent_agent_events: [],
     worker_fiber: null,
     ...overrides,
   }
@@ -153,7 +154,33 @@ describe("§17.6 Observability", () => {
       expect(row.tokens.input_tokens).toBe(100)
       expect(row.tokens.output_tokens).toBe(50)
       expect(row.tokens.total_tokens).toBe(150)
+      expect(row.recent_events).toEqual([])
       expect(typeof row.started_at).toBe("string")
+    })
+
+    it("buildSnapshot includes recent agent events for active sessions", () => {
+      const entry = makeRunningEntry({
+        recent_agent_events: [
+          {
+            at: new Date("2026-04-12T22:00:00.000Z"),
+            type: "notification",
+            summary: "Editing files",
+          },
+        ],
+      })
+      const state: OrchestratorState = {
+        ...emptyState(),
+        running: new Map([["MT-1", entry]]),
+      }
+      const snapshot = buildSnapshot(state)
+
+      expect(snapshot.running[0]?.recent_events).toEqual([
+        {
+          at: "2026-04-12T22:00:00.000Z",
+          type: "notification",
+          summary: "Editing files",
+        },
+      ])
     })
 
     it("buildSnapshot includes retry rows with correct fields", () => {

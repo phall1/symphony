@@ -70,22 +70,35 @@ function planeRequest(
   path: string,
   params?: Record<string, string | number | null | undefined>
 ): Effect.Effect<unknown, TrackerError> {
+  return planeRequestWithBody("GET", endpoint, apiKey, path, params)
+}
+
+function planeRequestWithBody(
+  method: "GET" | "PATCH",
+  endpoint: string,
+  apiKey: string,
+  path: string,
+  params?: Record<string, string | number | null | undefined>,
+  body?: unknown,
+): Effect.Effect<unknown, TrackerError> {
   const url = buildPlaneUrl(endpoint, path, params)
 
   return Effect.gen(function* () {
     const response = yield* Effect.tryPromise({
       try: () =>
         fetch(url, {
-          method: "GET",
+          method,
           headers: {
             Accept: "application/json",
+            ...(body === undefined ? {} : { "Content-Type": "application/json" }),
             "X-Api-Key": apiKey,
           },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         }),
       catch: (err) =>
         new TrackerErrorType({
           code: "plane_api_request",
-          message: `Plane API request failed: ${err instanceof Error ? err.message : String(err)}`,
+          message: `Plane API ${method} request failed: ${err instanceof Error ? err.message : String(err)}`,
           cause: err,
         }),
     })
@@ -296,6 +309,85 @@ function fetchIssueBlockedByIds(
   )
 }
 
+function normalizeStateName(value: string | null | undefined): string {
+  return value?.trim().toLowerCase() ?? ""
+}
+
+function getStateId(state: PlaneIssueNode["state"]): string | null {
+  if (state && typeof state === "object") {
+    return state.id?.trim() || null
+  }
+  if (typeof state === "string") {
+    return state.trim() || null
+  }
+  return null
+}
+
+function dedupeStateNames(stateNames: ReadonlyArray<string>): ReadonlyArray<string> {
+  const seen = new Set<string>()
+  const ordered: string[] = []
+  for (const stateName of stateNames) {
+    const normalized = normalizeStateName(stateName)
+    if (!normalized || seen.has(normalized)) continue
+    seen.add(normalized)
+    ordered.push(stateName)
+  }
+  return ordered
+}
+
+function resolveTargetState(
+  states: ReadonlyArray<PlaneStateNode>,
+  preferredNames: ReadonlyArray<string>,
+): PlaneStateNode | null {
+  for (const preferredName of dedupeStateNames(preferredNames)) {
+    const normalized = normalizeStateName(preferredName)
+    const match = states.find((state) => normalizeStateName(state.name) === normalized)
+    if (match?.id) return match
+  }
+  return null
+}
+
+function transitionIssueState(
+  endpoint: string,
+  apiKey: string,
+  workspaceSlug: string,
+  projectId: string,
+  projectIdentifier: string,
+  issueId: string,
+  preferredStateNames: ReadonlyArray<string>,
+): Effect.Effect<Issue | null, TrackerError> {
+  return Effect.gen(function* () {
+    const [issue, states] = yield* Effect.all([
+      fetchIssueDetail(endpoint, apiKey, workspaceSlug, projectId, issueId),
+      listProjectStates(endpoint, apiKey, workspaceSlug, projectId),
+    ])
+
+    const targetState = resolveTargetState(states, preferredStateNames)
+    if (!targetState?.id) return null
+
+    const currentStateId = getStateId(issue.state)
+    const stateIndex = buildStateIndex(states)
+
+    if (currentStateId === targetState.id) {
+      return normalizePlaneIssue(issue, projectIdentifier, stateIndex)
+    }
+
+    const updated = yield* planeRequestWithBody(
+      "PATCH",
+      endpoint,
+      apiKey,
+      `/workspaces/${workspaceSlug}/projects/${projectId}/work-items/${issueId}/`,
+      undefined,
+      { state: targetState.id },
+    ).pipe(
+      Effect.map(expectPlaneIssuePayload),
+      Effect.catch((error) => (error instanceof TrackerErrorType ? Effect.fail(error) : Effect.die(error))),
+    )
+
+    return normalizePlaneIssue(updated, projectIdentifier, stateIndex)
+  })
+}
+
 function buildStateIndex(states: ReadonlyArray<PlaneStateNode>): ReadonlyMap<string, PlaneStateNode> {
   return new Map(
     states
@@ -473,4 +565,52 @@ export function fetchIssuesByStates(
       .filter((issue) => stateSet.has(getStateName(issue.state, stateIndex).toLowerCase()))
       .map((issue) => normalizePlaneIssue(issue, projectIdentifier, stateIndex))
   })
+}
+
+export function transitionIssueToActive(
+  endpoint: string,
+  apiKey: string,
+  workspaceSlug: string,
+  projectId: string,
+  projectIdentifier: string,
+  activeStates: ReadonlyArray<string>,
+  issueId: string,
+): Effect.Effect<Issue | null, TrackerError> {
+  const preferredStates = [
+    "In Progress",
+    ...activeStates.filter((state) => normalizeStateName(state) !== "todo"),
+    ...activeStates,
+  ]
+
+  return transitionIssueState(
+    endpoint,
+    apiKey,
+    workspaceSlug,
+    projectId,
+    projectIdentifier,
+    issueId,
+    preferredStates,
+  )
+}
+
+export function transitionIssueToCompleted(
+  endpoint: string,
+  apiKey: string,
+  workspaceSlug: string,
+  projectId: string,
+  projectIdentifier: string,
+  terminalStates: ReadonlyArray<string>,
+  issueId: string,
+): Effect.Effect<Issue | null, TrackerError> {
+  const preferredStates = ["Done", ...terminalStates]
+
+  return transitionIssueState(
+    endpoint,
+    apiKey,
+    workspaceSlug,
+    projectId,
+    projectIdentifier,
+    issueId,
+    preferredStates,
+  )
 }

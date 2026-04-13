@@ -4,6 +4,7 @@ import type {
   RetryEntry,
   TokenTotals,
   Issue,
+  RecentAgentEvent,
 } from "../types.js"
 import type { Fiber } from "effect"
 
@@ -15,6 +16,8 @@ const EMPTY_TOTALS: TokenTotals = {
   total_tokens: 0,
   seconds_running: 0,
 }
+
+const MAX_RECENT_AGENT_EVENTS = 50
 
 export function makeInitialState(
   pollIntervalMs: number,
@@ -78,6 +81,19 @@ export function updateRunningIssueSnapshot(
   return updateRunningEntry(state, issue.id, (entry) => ({
     ...entry,
     issue,
+  }))
+}
+
+export function appendRecentAgentEvent(
+  state: OrchestratorState,
+  issueId: string,
+  event: RecentAgentEvent
+): OrchestratorState {
+  return updateRunningEntry(state, issueId, (entry) => ({
+    ...entry,
+    recent_agent_events: [...entry.recent_agent_events, event].slice(
+      -MAX_RECENT_AGENT_EVENTS
+    ),
   }))
 }
 
@@ -294,7 +310,8 @@ export function makeRunningEntry(
     turn_count: 0,
     retry_attempt: normalizeAttempt(attempt),
     started_at: new Date(),
-    workspace_path: null,
+    workspace_path: workspacePath,
+    recent_agent_events: [],
     worker_fiber: workerFiber,
   }
 }

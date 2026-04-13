@@ -122,7 +122,7 @@ function loadSettings(): Settings {
     opencodeServerHost,
     opencodeServerPort,
     opencodeServerUrl: (explicitServerUrl || `http://${opencodeServerHost}:${opencodeServerPort}`).replace(/\/+$/, ""),
-    opencodeAgent: process.env["SYMPHONY_OPENCODE_AGENT"]?.trim() || "build",
+    opencodeAgent: process.env["SYMPHONY_OPENCODE_AGENT"]?.trim() || "",
     opencodeModel: process.env["SYMPHONY_OPENCODE_MODEL"]?.trim() || "anthropic/claude-sonnet-4-20250514",
   }
 }
@@ -133,9 +133,9 @@ function applyBootstrap(
 ): Settings {
   return {
     ...settings,
-    planeApiKey: settings.planeApiKey || bootstrap.apiKey,
-    planeWorkspaceSlug: settings.planeWorkspaceSlug || bootstrap.workspaceSlug,
-    planeProjectId: settings.planeProjectId || bootstrap.projectId,
+    planeApiKey: bootstrap.apiKey,
+    planeWorkspaceSlug: bootstrap.workspaceSlug,
+    planeProjectId: bootstrap.projectId,
   }
 }
 
@@ -351,6 +351,18 @@ async function ensurePlaneApiEnv(settings: Settings): Promise<void> {
 
     if (line.startsWith("API_KEY_RATE_LIMIT=")) {
       return 'API_KEY_RATE_LIMIT="10000/minute"'
+    }
+
+    if (line.startsWith("ADMIN_BASE_URL=")) {
+      return `ADMIN_BASE_URL="${settings.planeAdminBaseUrl}"`
+    }
+
+    if (line.startsWith("SPACE_BASE_URL=")) {
+      return `SPACE_BASE_URL="http://${settings.planeUiHost}:3002"`
+    }
+
+    if (line.startsWith("APP_BASE_URL=")) {
+      return `APP_BASE_URL="${settings.planeUiBaseUrl}"`
     }
 
     return line
@@ -580,7 +592,6 @@ tracker:
   workspace_slug: $PLANE_WORKSPACE_SLUG
   project_id: $PLANE_PROJECT_ID
   active_states:
-    - Todo
     - In Progress
   terminal_states:
     - Done
@@ -603,12 +614,11 @@ hooks:
 agent:
   engine: opencode
   max_concurrent_agents: 1
-  max_turns: 2
+  max_turns: 1
 
 opencode:
   mode: shared
   server_url: ${settings.opencodeServerUrl}
-  agent: ${settings.opencodeAgent}
   model: ${settings.opencodeModel}
 
 codex:
@@ -638,6 +648,7 @@ Important:
 Execution rules:
 - Start from the ticket title and description above.
 - Make the smallest correct change needed.
+- Do not launch background agents or broad repository research for simple tasks.
 - Run targeted validation for the change.
 - In the final response, report:
   - what changed
@@ -712,6 +723,12 @@ async function runSymphony(settings: Settings): Promise<void> {
       "--debug",
     ],
     cwd: settings.rootDir,
+    env: {
+      ...process.env,
+      PLANE_API_KEY: settings.planeApiKey,
+      PLANE_WORKSPACE_SLUG: settings.planeWorkspaceSlug,
+      PLANE_PROJECT_ID: settings.planeProjectId,
+    },
     stdout: "inherit",
     stderr: "inherit",
     stdin: "inherit",

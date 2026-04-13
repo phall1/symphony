@@ -1,9 +1,71 @@
 import { Effect, Ref, Stream, Cause } from "effect"
 import type { Issue, AgentEvent } from "../types.js"
-import { updateRunningEntry, addTokenDelta, setRateLimits, isActiveState } from "./state.js"
+import {
+  updateRunningEntry,
+  addTokenDelta,
+  setRateLimits,
+  isActiveState,
+  appendRecentAgentEvent,
+} from "./state.js"
 import { WorkspaceManager, TrackerClient, WorkflowStore, PromptEngine, OrchestratorStateRef } from "../services.js"
 import { AgentEngine } from "../engine/agent.js"
 import type { AgentSession } from "../engine/agent.js"
+
+function summarizeAgentEvent(event: AgentEvent): string {
+  switch (event.type) {
+    case "session_started":
+      return `Session started${event.pid ? ` (pid ${event.pid})` : ""}`
+    case "turn_completed":
+      return event.usage
+        ? `Turn completed (${event.usage.total_tokens} tokens)`
+        : "Turn completed"
+    case "turn_failed":
+      return `Turn failed: ${event.error}`
+    case "turn_cancelled":
+      return "Turn cancelled"
+    case "notification":
+      return event.message
+    case "approval_auto_approved":
+      return `Auto-approved: ${event.description}`
+    case "token_usage":
+      return `Token usage ${event.total} total (${event.input} in / ${event.output} out)`
+    case "rate_limit":
+      return "Rate limit update received"
+    case "stall_heartbeat":
+      return "Worker heartbeat while waiting"
+    case "other":
+      return "Other engine event"
+  }
+}
+
+function maybeTransitionIssueToActive(
+  issue: Issue
+): Effect.Effect<Issue, never, TrackerClient | OrchestratorStateRef> {
+  return Effect.gen(function* () {
+    const tracker = yield* TrackerClient
+    const { ref: stateRef } = yield* OrchestratorStateRef
+
+    const transitioned = yield* Effect.catch(
+      tracker.transitionIssueToActive(issue.id),
+      (error) =>
+        Effect.logWarning(`Failed to move ${issue.identifier} to active tracker state`).pipe(
+          Effect.annotateLogs("cause", error.message),
+          Effect.as(null as Issue | null),
+        ),
+    )
+
+    if (!transitioned) return issue
+
+    yield* Ref.update(stateRef, (s) =>
+      updateRunningEntry(s, issue.id, (entry) => ({
+        ...entry,
+        issue: transitioned,
+      }))
+    )
+
+    return transitioned
+  })
+}
 
 export function runWorker(
   issue: Issue,
@@ -19,6 +81,8 @@ export function runWorker(
     const config = yield* store.getResolved()
     const workspaceManager = yield* WorkspaceManager
     const agentEngine = yield* AgentEngine
+
+    const activeIssue = yield* maybeTransitionIssueToActive(issue)
 
     const workspace = yield* workspaceManager.createForIssue(issue.identifier)
 
@@ -59,7 +123,7 @@ export function runWorker(
     )
 
      yield* Effect.catch(
-       turnsLoop(issue, attempt, session),
+       turnsLoop(activeIssue, attempt, session),
        (error) =>
          Effect.gen(function* () {
            yield* Effect.catchCauseIf(
@@ -158,17 +222,26 @@ function handleAgentEvent(
   return Effect.gen(function* () {
     const { ref: stateRef } = yield* OrchestratorStateRef
     const now = new Date()
+    const recentEvent = {
+      at: now,
+      type: event.type,
+      summary: summarizeAgentEvent(event),
+    } as const
 
     switch (event.type) {
       case "session_started":
         yield* Ref.update(stateRef, (s) =>
-          updateRunningEntry(s, issueId, (e) => ({
-            ...e,
-            session_id: event.sessionId,
-            codex_app_server_pid: event.pid ?? null,
-            last_codex_event: "session_started",
-            last_codex_timestamp: now,
-          }))
+          appendRecentAgentEvent(
+            updateRunningEntry(s, issueId, (e) => ({
+              ...e,
+              session_id: event.sessionId,
+              codex_app_server_pid: event.pid ?? null,
+              last_codex_event: "session_started",
+              last_codex_timestamp: now,
+            })),
+            issueId,
+            recentEvent
+          )
         )
         break
 
@@ -193,51 +266,71 @@ function handleAgentEvent(
             last_codex_timestamp: now,
           }))
 
-          return addTokenDelta(updated, inputDelta, outputDelta, totalDelta)
+          return appendRecentAgentEvent(
+            addTokenDelta(updated, inputDelta, outputDelta, totalDelta),
+            issueId,
+            recentEvent
+          )
         })
         break
 
       case "rate_limit":
         yield* Ref.update(stateRef, (s) =>
-          setRateLimits(
-            updateRunningEntry(s, issueId, (e) => ({
-              ...e,
-              last_codex_event: "rate_limit",
-              last_codex_timestamp: now,
-            })),
-            event.payload
+          appendRecentAgentEvent(
+            setRateLimits(
+              updateRunningEntry(s, issueId, (e) => ({
+                ...e,
+                last_codex_event: "rate_limit",
+                last_codex_timestamp: now,
+              })),
+              event.payload
+            ),
+            issueId,
+            recentEvent
           )
         )
         break
 
       case "turn_completed":
         yield* Ref.update(stateRef, (s) =>
-          updateRunningEntry(s, issueId, (e) => ({
-            ...e,
-            last_codex_event: "turn_completed",
-            last_codex_timestamp: now,
-          }))
+          appendRecentAgentEvent(
+            updateRunningEntry(s, issueId, (e) => ({
+              ...e,
+              last_codex_event: "turn_completed",
+              last_codex_timestamp: now,
+            })),
+            issueId,
+            recentEvent
+          )
         )
         break
 
       case "notification":
         yield* Ref.update(stateRef, (s) =>
-          updateRunningEntry(s, issueId, (e) => ({
-            ...e,
-            last_codex_message: event.message,
-            last_codex_event: "notification",
-            last_codex_timestamp: now,
-          }))
+          appendRecentAgentEvent(
+            updateRunningEntry(s, issueId, (e) => ({
+              ...e,
+              last_codex_message: event.message,
+              last_codex_event: "notification",
+              last_codex_timestamp: now,
+            })),
+            issueId,
+            recentEvent
+          )
         )
         break
 
       default:
         yield* Ref.update(stateRef, (s) =>
-          updateRunningEntry(s, issueId, (e) => ({
-            ...e,
-            last_codex_event: event.type,
-            last_codex_timestamp: now,
-          }))
+          appendRecentAgentEvent(
+            updateRunningEntry(s, issueId, (e) => ({
+              ...e,
+              last_codex_event: event.type,
+              last_codex_timestamp: now,
+            })),
+            issueId,
+            recentEvent
+          )
         )
         break
     }

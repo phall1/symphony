@@ -4,9 +4,6 @@ import {
   terminateRunningIssue,
   updateRunningIssueSnapshot,
   releaseClaim,
-  addCompleted,
-  addRuntimeSeconds,
-  removeRunning,
   isActiveState,
   isTerminalState,
   availableGlobalSlots,
@@ -21,6 +18,7 @@ import {
   interruptFiber,
   type OrchestratorDeps,
 } from "./dispatch.js"
+export { handleWorkerExit } from "./worker-exit.js"
 import {
   WorkflowStore,
   TrackerClient,
@@ -226,42 +224,6 @@ function terminateAndCleanup(
     }
 
     yield* Ref.update(stateRef, (s) => terminateRunningIssue(s, issueId).state)
-  })
-}
-
-// ─── Worker Exit Handling (SPEC.md §16.6) ─────────────────────────────────────
-
-export function handleWorkerExit(
-  issueId: string,
-  normal: boolean
-): Effect.Effect<void, never, OrchestratorDeps> {
-  return Effect.gen(function* () {
-    const { ref: stateRef } = yield* OrchestratorStateRef
-    const store = yield* WorkflowStore
-    const config = yield* Effect.orDie(store.getResolved())
-
-    const entry = yield* Ref.modify(stateRef, (s) => {
-      const e = s.running.get(issueId)
-      if (!e) return [null, s] as const
-      const s2 = addRuntimeSeconds(s, e)
-      return [e, removeRunning(s2, issueId).state] as const
-    })
-    if (!entry) return
-
-    if (normal) {
-      yield* Ref.update(stateRef, (s) => addCompleted(s, issueId))
-      yield* scheduleRetry(issueId, 1, {
-        identifier: entry.identifier,
-        error: null,
-        isContinuation: true,
-      })
-    } else {
-      const nextAttempt = nextAttemptFromRunning(entry)
-      yield* scheduleRetry(issueId, nextAttempt ?? 1, {
-        identifier: entry.identifier,
-        error: "worker exited abnormally",
-      })
-    }
   })
 }
 

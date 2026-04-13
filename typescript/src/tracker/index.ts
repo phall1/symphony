@@ -12,6 +12,8 @@ import {
   fetchIssueStatesByIds as planeFetchIssueStatesByIds,
   fetchIssuesByStates as planeFetchIssuesByStates,
   fetchProjectIdentifier as planeFetchProjectIdentifier,
+  transitionIssueToActive as planeTransitionIssueToActive,
+  transitionIssueToCompleted as planeTransitionIssueToCompleted,
   fetchViewerId as planeFetchViewerId,
 } from "./plane.js"
 
@@ -50,6 +52,8 @@ function makeLinearTrackerClient(config: ResolvedConfig): Effect.Effect<TrackerC
         linearFetchIssueStatesByIds(endpoint, api_key, ids),
       fetchIssuesByStates: (states: ReadonlyArray<string>) =>
         linearFetchIssuesByStates(endpoint, api_key, project_slug, states),
+      transitionIssueToActive: () => Effect.succeed(null),
+      transitionIssueToCompleted: () => Effect.succeed(null),
       resolvedAssigneeId,
     }
   })
@@ -125,6 +129,26 @@ function makePlaneTrackerClient(config: ResolvedConfig): Effect.Effect<TrackerCl
           project_id,
           projectIdentifier,
           states,
+        ),
+      transitionIssueToActive: (issueId: string) =>
+        planeTransitionIssueToActive(
+          endpoint,
+          api_key,
+          workspace_slug,
+          project_id,
+          projectIdentifier,
+          active_states,
+          issueId,
+        ),
+      transitionIssueToCompleted: (issueId: string) =>
+        planeTransitionIssueToCompleted(
+          endpoint,
+          api_key,
+          workspace_slug,
+          project_id,
+          projectIdentifier,
+          config.tracker.terminal_states,
+          issueId,
         ),
       resolvedAssigneeId,
     }

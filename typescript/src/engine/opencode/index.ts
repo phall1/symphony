@@ -378,6 +378,16 @@ const toModelSelector = (model: string | undefined): OpenCodeModelSelector | und
   }
 }
 
+const formatUnknownError = (value: unknown): string => {
+  if (typeof value === "string") return value
+  if (value instanceof Error) return value.message
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
 // Maps OpenCode SSE event → AgentEvent + terminal flag
 const mapSSEEvent = (
   event: OpenCodeSSEEvent,
@@ -396,7 +406,7 @@ const mapSSEEvent = (
   if (eventType === "session.error") {
     const errorMsg = (data as Record<string, unknown>)["error"] ??
       (data as Record<string, unknown>)["message"] ?? "Unknown session error"
-    return { agentEvent: { type: "turn_failed", error: String(errorMsg) }, terminal: true }
+    return { agentEvent: { type: "turn_failed", error: formatUnknownError(errorMsg) }, terminal: true }
   }
 
   if (eventType === "permission.asked") {

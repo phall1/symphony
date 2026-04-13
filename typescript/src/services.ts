@@ -37,6 +37,8 @@ export class TrackerClient extends ServiceMap.Service<
     fetchIssuesByStates(
       states: ReadonlyArray<string>
     ): Effect.Effect<ReadonlyArray<Issue>, TrackerError>
+    transitionIssueToActive(issueId: string): Effect.Effect<Issue | null, TrackerError>
+    transitionIssueToCompleted(issueId: string): Effect.Effect<Issue | null, TrackerError>
     readonly resolvedAssigneeId: string | null
   }
 >()(

@@ -36,6 +36,11 @@ export function buildSnapshot(state: OrchestratorState): RuntimeSnapshot {
         output_tokens: entry.codex_output_tokens,
         total_tokens: entry.codex_total_tokens,
       },
+      recent_events: entry.recent_agent_events.map((event) => ({
+        at: event.at.toISOString(),
+        type: event.type,
+        summary: event.summary,
+      })),
     })
   }
 

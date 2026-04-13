@@ -5,6 +5,15 @@ import { buildSnapshot } from "./snapshot.js"
 
 // ─── Hono app factory ─────────────────────────────────────────────────────────
 
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;")
+}
+
 function makeApp(
   stateRef: Ref.Ref<OrchestratorState>,
   pollTrigger: Queue.Queue<void>,
@@ -19,18 +28,18 @@ function makeApp(
 <html lang="en">
 <head><meta charset="utf-8"><title>Symphony</title>
 <meta http-equiv="refresh" content="10">
-<style>body{font-family:monospace;max-width:900px;margin:40px auto;padding:0 20px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:6px 10px;text-align:left}th{background:#f0f0f0}</style>
+<style>body{font-family:monospace;max-width:1100px;margin:40px auto;padding:0 20px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:6px 10px;text-align:left;vertical-align:top}th{background:#f0f0f0}ul{margin:0;padding-left:20px}details{max-width:420px}li{margin:4px 0}</style>
 </head>
 <body>
 <h1>Symphony</h1>
 <p>Running: <strong>${snap.counts.running}</strong> &nbsp; Retrying: <strong>${snap.counts.retrying}</strong> &nbsp; Generated: ${snap.generated_at}</p>
 <h2>Active Sessions</h2>
-${snap.running.length === 0 ? '<p>None</p>' : `<table><tr><th>Issue</th><th>State</th><th>Session</th><th>Turns</th><th>Last Event</th><th>Tokens</th></tr>
-${snap.running.map(r => `<tr><td>${r.issue_identifier}</td><td>${r.state}</td><td>${r.session_id ?? ''}</td><td>${r.turn_count}</td><td>${r.last_event ?? ''}</td><td>${r.tokens.total_tokens}</td></tr>`).join('')}
+${snap.running.length === 0 ? '<p>None</p>' : `<table><tr><th>Issue</th><th>State</th><th>Session</th><th>Turns</th><th>Last Event</th><th>Recent Activity</th><th>Tokens</th></tr>
+${snap.running.map((r) => `<tr><td>${escapeHtml(r.issue_identifier)}</td><td>${escapeHtml(r.state)}</td><td>${escapeHtml(r.session_id ?? '')}</td><td>${r.turn_count}</td><td>${escapeHtml(r.last_event ?? '')}</td><td><details><summary>${r.recent_events.length} events</summary>${r.recent_events.length === 0 ? '<p>None</p>' : `<ul>${r.recent_events.map((event) => `<li><strong>${escapeHtml(event.type)}</strong> ${escapeHtml(event.summary)}<br><small>${escapeHtml(event.at)}</small></li>`).join('')}</ul>`}</details></td><td>${r.tokens.total_tokens}</td></tr>`).join('')}
 </table>`}
 <h2>Retry Queue</h2>
 ${snap.retrying.length === 0 ? '<p>None</p>' : `<table><tr><th>Issue</th><th>Attempt</th><th>Due At</th><th>Error</th></tr>
-${snap.retrying.map(r => `<tr><td>${r.issue_identifier}</td><td>${r.attempt}</td><td>${r.due_at}</td><td>${r.error ?? ''}</td></tr>`).join('')}
+${snap.retrying.map(r => `<tr><td>${escapeHtml(r.issue_identifier)}</td><td>${r.attempt}</td><td>${escapeHtml(r.due_at)}</td><td>${escapeHtml(r.error ?? '')}</td></tr>`).join('')}
 </table>`}
 <h2>Totals</h2>
 <p>Input tokens: ${snap.codex_totals.input_tokens} &nbsp; Output: ${snap.codex_totals.output_tokens} &nbsp; Total: ${snap.codex_totals.total_tokens} &nbsp; Runtime: ${Math.round(snap.codex_totals.seconds_running)}s</p>
@@ -90,6 +99,11 @@ ${snap.retrying.map(r => `<tr><td>${r.issue_identifier}</td><td>${r.attempt}</td
                 output_tokens: runningEntry.codex_output_tokens,
                 total_tokens: runningEntry.codex_total_tokens,
               },
+              recent_events: runningEntry.recent_agent_events.map((event) => ({
+                at: event.at.toISOString(),
+                type: event.type,
+                summary: event.summary,
+              })),
             }
           : null,
       retry:
